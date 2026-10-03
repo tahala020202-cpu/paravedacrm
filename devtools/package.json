@@ -1,0 +1,11 @@
+{
+  "name": "paraveda-devtools",
+  "private": true,
+  "type": "module",
+  "description": "Local test harness for Paraveda CRM (not deployed)",
+  "dependencies": {
+    "@php-wasm/node": "^1.6.0",
+    "@php-wasm/universal": "^1.6.0",
+    "jsdom": "^30.1.1"
+  }
+}

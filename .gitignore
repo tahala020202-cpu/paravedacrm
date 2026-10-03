@@ -1,0 +1,12 @@
+# local test/dev artifacts (not part of the deployment)
+/.testsite/
+/devtools/node_modules/
+node_modules/
+
+# runtime data produced by api.php on the server
+/public_html/public_html/backups/
+/public_html/public_html/*.tmp.*
+/public_html/public_html/.crm.etag
+/public_html/public_html/journal.log*
+/public_html/public_html/audit.log*
+/public_html/public_html/.crm.lock
