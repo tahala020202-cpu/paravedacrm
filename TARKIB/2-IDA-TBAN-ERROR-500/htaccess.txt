@@ -1,0 +1,9 @@
+# Paraveda CRM — نسخة مبسطة ديال .htaccess
+# استعمل هادي غير إلا بان ليك "Error 500" من بعد ما صيفطي النسخة الكاملة.
+# كترجع غير الحماية الأساسية — بلا كاش وبلا ضغط.
+
+<FilesMatch "^(crm_data\.json|crm_data\.json\.backup|audit\.log|audit\.log\.1|journal\.log|journal\.log\.1|\.crm\.lock|\.crm\.etag|INSTALL\.txt|import\.php|manual_sync\.php|recover\.php|dino\.html|.*\.tmp.*)$">
+  Require all denied
+</FilesMatch>
+
+Options -Indexes
