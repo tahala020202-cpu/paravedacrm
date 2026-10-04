@@ -467,6 +467,82 @@ if ($m === 'GET') {
    * دابا: بصمة رخيصة (stat) → إلا ما تبدل والو كنرجعو 304 بلا ما نقراو حتى ملف
    *      وبلا ما نصيفطو حتى بايت. المتصفح ما كيديرش parse ولا localStorage ولا
    *      إعادة رسم — وهادا هو لي كان كيبلوكي الشاشة كل 5 ثواني. */
+  /* ================================================================
+   * v3.91 — واجهة خفيفة لـ Google Sheets
+   *   api.php?export=adspend&token=...  → المصاريف الخام (للتحرير فالشيت)
+   *   api.php?export=perf&token=...     → جدول الأداء محسوب (للقراءة فقط)
+   * كترجع غير لي محتاج الشيت (بضع كيلوبايتات) عوض 1.1 ميغا.
+   * ================================================================ */
+  if (isset($_GET['export'])) {
+    $__what = (string)$_GET['export'];
+    $__d    = crm_read_raw();
+    $__ads  = isset($__d['paraveda_adspend_v1']['d']) ? crm_unwrap($__d['paraveda_adspend_v1']['d']) : array();
+    if (!is_array($__ads)) $__ads = array();
+    $__adsT = isset($__d['paraveda_adspend_v1']['t']) ? (int)$__d['paraveda_adspend_v1']['t'] : 0;
+    $__rs   = isset($__d['paraveda_reset_v1']['t'])   ? (int)$__d['paraveda_reset_v1']['t']   : 0;
+
+    if ($__what === 'adspend') {
+      crm_out(array('ok'=>true, 't'=>$__adsT, 'rs'=>$__rs, 'rows'=>array_values($__ads)));
+    }
+
+    if ($__what === 'perf') {
+      $__ord = isset($__d['paraveda_orders_v5']['d']) ? crm_unwrap($__d['paraveda_orders_v5']['d']) : array();
+      if (!is_array($__ord)) $__ord = array();
+      /* فهرسة الطلبيات بالتاريخ — بلا هادشي كنديرو 109 × 1400 مقارنة */
+      $__byDate = array();
+      foreach ($__ord as $o) {
+        if (!is_array($o) || !empty($o['_del'])) continue;
+        $dt = isset($o['dateCreation']) ? (string)$o['dateCreation'] : '';
+        if ($dt === '') continue;
+        $__byDate[$dt][] = $o;
+      }
+      $__norm = function($v) { return strtolower(trim((string)$v)); };
+      $__rows = array();
+      foreach ($__ads as $a) {
+        if (!is_array($a)) continue;
+        $aDate = isset($a['date'])    ? (string)$a['date']    : '';
+        $aAg   = isset($a['agent'])   ? (string)$a['agent']   : '';
+        $aPr   = isset($a['produit']) ? (string)$a['produit'] : '';
+        $aSrc  = isset($a['source'])  ? (string)$a['source']  : '';
+        $amt   = isset($a['amount'])  ? (float)$a['amount']   : 0;
+
+        $cnt = 0; $conf = 0; $livre = 0; $retour = 0; $ca = 0;
+        $pool = isset($__byDate[$aDate]) ? $__byDate[$aDate] : array();
+        foreach ($pool as $o) {
+          /* نفس منطق المطابقة ديال صفحة Dashboard performance بالضبط */
+          if ($aAg !== '' && $__norm(isset($o['agent']) ? $o['agent'] : '') !== $__norm($aAg)) continue;
+          if ($aPr !== '' && $__norm(isset($o['produit']) ? $o['produit'] : '') !== $__norm($aPr)) continue;
+          if ($aAg === '' && $aSrc !== ''
+              && $__norm(isset($o['originLead']) ? $o['originLead'] : '') !== $__norm($aSrc)) continue;
+
+          $cnt++;
+          $st = isset($o['statut'])    ? (string)$o['statut']    : '';
+          $lv = isset($o['livraison']) ? (string)$o['livraison'] : '';
+          if ($st === 'Confirmé') $conf++;
+          if ($lv === 'Livrée' || $lv === 'Rechange')   { $livre++;  $ca += isset($o['prix']) ? (float)$o['prix'] : 0; }
+          if ($lv === 'Retour' || $lv === 'Remboursé')  { $retour++; }
+        }
+        $__rows[] = array(
+          'id'      => isset($a['id']) ? $a['id'] : '',
+          'date'    => $aDate,
+          'agent'   => $aAg,
+          'produit' => $aPr,
+          'source'  => $aSrc,
+          'amount'  => $amt,
+          'count'   => $cnt,
+          'conf'    => $conf,
+          'livre'   => $livre,
+          'retour'  => $retour,
+          'ca'      => $ca,
+          'cpl'     => $cnt > 0 ? round($amt / $cnt, 2) : '',
+        );
+      }
+      crm_out(array('ok'=>true, 't'=>$__adsT, 'rs'=>$__rs, 'rows'=>$__rows));
+    }
+
+    crm_out(array('ok'=>false, 'err'=>'unknown-export'), 400);
+  }
+
   $__sig  = crm_data_sig();
   $__inm  = trim((string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? ''));
   $__hit  = crm_etag_cached($__sig);
@@ -563,7 +639,10 @@ if ($m === 'POST') {
     $d = $__f;
   }
   // ghost guard: never let a client wipe orders/users with an empty array while server has data
-  if (($k === 'paraveda_orders_v5' || $k === 'paraveda_users_v1' || $k === 'paraveda_villes_v2' || $k === 'paraveda_chat_v1' || $k === 'paraveda_catalog_v1' || $k === 'paraveda_backup_v1' || $k === 'paraveda_backup_v1_agents') && is_array($d) && count($d) === 0) {
+  /* v3.91: zidt paraveda_adspend_v1 — دابا Google Sheet كيقدر يكتب هنا،
+   * وإلا تمسحات الورقة بالغلط (ولا سكريبت طاح فنص الطريق) ما خاصش
+   * المصاريف كاملين يطيرو من الـCRM. */
+  if (($k === 'paraveda_orders_v5' || $k === 'paraveda_users_v1' || $k === 'paraveda_villes_v2' || $k === 'paraveda_chat_v1' || $k === 'paraveda_catalog_v1' || $k === 'paraveda_adspend_v1' || $k === 'paraveda_backup_v1' || $k === 'paraveda_backup_v1_agents') && is_array($d) && count($d) === 0) {
     $cur = $__cur0;   // PERF v3.90: كنعاودو نستعملو القراية ديال فوق عوض قراية جديدة ديال 2.2MB
     if (isset($cur[$k]['d']) && is_array($cur[$k]['d']) && count($cur[$k]['d']) > 0) {
       crm_audit("ghost | key=$k | empty write blocked");
