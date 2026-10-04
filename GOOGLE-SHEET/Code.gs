@@ -5,15 +5,15 @@
  *
  *  كيزيد 3 أوراق جداد فالملف ديالك. الأوراق ديالك ما كيتمسوش. ✅
  *
- *   📋 COMMANDES    الطلبيات من الـCRM          (قراءة فقط)
- *   💰 ADS          المصاريف — هنا كتكتب        (كتمشي للـCRM)
- *   📊 PERFORMANCE  المصاريف + الطلبيات محسوبين (قراءة فقط)
+ *   📋 CRM_COMMANDES  الطلبيات من الـCRM          (قراءة فقط)
+ *   💰 CRM_ADS        المصاريف — هنا كتكتب        (كتمشي للـCRM)
+ *   📊 CRM_PERF       المصاريف + الطلبيات محسوبين (قراءة فقط)
  *
  *  ⚠️ ما تكتبش صيغ داخل هاد 3 أوراق — كيتمسحو ويتعاودو فكل تحديث.
  *     دير الحسابات ديالك فالأوراق ديالك، وجبد الداتا بصيغة:
- *        =COMMANDES!K2
- *        =SUMIFS(COMMANDES!L:L; COMMANDES!Q:Q; "imane")
- *        =QUERY(COMMANDES!A:AA; "select * where D='Confirmé'")
+ *        =CRM_COMMANDES!K2
+ *        =SUMIFS(CRM_COMMANDES!L:L; CRM_COMMANDES!Q:Q; "imane")
+ *        =QUERY(CRM_COMMANDES!A:AA; "select * where D='Confirmé'")
  */
 
 // ─────────── ①  بدّل غير هاد السطر ───────────
@@ -24,7 +24,9 @@ const CRM_TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 
 // ─────────── ما تبدّل والو من هنا لتحت ───────────
 
-const SH_CMD = 'COMMANDES', SH_ADS = 'ADS', SH_PERF = 'PERFORMANCE';
+/* v2: بادئة CRM_ باش ما يتضاربش مع الأوراق ديالك.
+   (المستخدم عندو أصلاً ورقة سميتها COMMANDES فيها خدمتو) */
+const SH_CMD = 'CRM_COMMANDES', SH_ADS = 'CRM_ADS', SH_PERF = 'CRM_PERF';
 const ADS_COLS  = ['id', 'date', 'agent', 'produit', 'source', 'amount'];
 const PERF_COLS = ['date','agent','produit','source','amount','count','conf','livre','retour','ca','cpl'];
 const AR = {
@@ -74,10 +76,28 @@ function pvCall_(qs, payload) {
   catch (e) { throw new Error('جواب ماشي JSON — تأكد من CRM_URL.\n' + body.slice(0, 200)); }
 }
 
-/** كيجيب/كيصاوب ورقة بلا ما يمس الأوراق الأخرى */
+/**
+ * كيجيب/كيصاوب ورقة — وكيرفض يكتب فأي ورقة ماشي ديالو.
+ * 🛡️ حماية: إلا كانت الورقة موجودة من قبل وماشي السكريبت لي صاوبها،
+ *    كيوقف. بلا هادشي، شي ورقة ديالك بنفس السمية كتتمسح.
+ */
 function pvSheet_(name, cols) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(name) || ss.insertSheet(name);
+  const props = pvProps_();
+  const owned = JSON.parse(props.getProperty('owned') || '[]');
+  let sh = ss.getSheetByName(name);
+  if (sh && owned.indexOf(name) === -1) {
+    throw new Error(
+      '🛑 وقفنا باش ما نمسحوش خدمتك!\n\n' +
+      'كاينة ورقة سميتها "' + name + '" وماشي السكريبت لي صاوبها.\n' +
+      'إلا كملنا، غادي تتمسح الداتا لي فيها.\n\n' +
+      'الحل: بدّل سمية الورقة ديالك، ولا بدّل SH_CMD/SH_ADS/SH_PERF فوق فالسكريبت.');
+  }
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    owned.push(name);
+    props.setProperty('owned', JSON.stringify(owned));
+  }
   const head = cols.map(c => AR[c] || c);
   sh.getRange(1, 1, 1, cols.length).setValues([head])
     .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
