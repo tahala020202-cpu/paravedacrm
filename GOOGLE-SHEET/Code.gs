@@ -18,7 +18,7 @@
 
 // ─────────── ①  بدّل غير هاد السطر ───────────
 
-const CRM_URL = 'https://PARAVEDA.MA/api.php';   // ⬅️ الدومين ديالك
+const CRM_URL = 'https://dkhol.xyz/api.php';   // ✅ الدومين ديالك — واجد
 
 const CRM_TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 
