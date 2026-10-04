@@ -52,7 +52,8 @@ const server = http.createServer(async (req, res) => {
 	let pathname = decodeURIComponent(url.pathname);
 	if (pathname === '/') pathname = '/index.html';
 
-	if (!pathname.endsWith('.php')) {
+	// /files/* is always served as a raw download, never executed
+	if (!pathname.endsWith('.php') || pathname.startsWith('/files/')) {
 		const file = path.join(HOST_DIR, pathname);
 		if (fs.existsSync(file) && fs.statSync(file).isFile()) {
 			const buf = fs.readFileSync(file);

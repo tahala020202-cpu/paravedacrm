@@ -540,6 +540,42 @@ if ($m === 'GET') {
       crm_out(array('ok'=>true, 't'=>$__adsT, 'rs'=>$__rs, 'rows'=>$__rows));
     }
 
+    if ($__what === 'orders') {
+      /* v3.92: الطلبيات الحية للـ Google Sheet.
+       * كنرجعو صفوف (arrays) ماشي objects — الحجم كينقص ~60% وكيدخل
+       * مباشرة لـ setValues() بلا تحويل. */
+      $__cols = array('id','dateCreation','dateConfirmation','statut','remarques','idCmd',
+                      'nom','telephone','ville','adresse','qte','prix','produit','livraison',
+                      'upsell','carousell','agent','link','carosellFlag','originLead',
+                      'commission','fees','livreur','tracking','dateExp','dateLiv','motif');
+      $__since = isset($_GET['since']) ? trim((string)$_GET['since']) : '';
+      $__ord = isset($__d['paraveda_orders_v5']['d']) ? crm_unwrap($__d['paraveda_orders_v5']['d']) : array();
+      if (!is_array($__ord)) $__ord = array();
+      $__out = array();
+      foreach ($__ord as $o) {
+        if (!is_array($o) || !empty($o['_del'])) continue;              // الممسوحة ما كتبانش
+        if ($__since !== '' && (string)(isset($o['dateCreation']) ? $o['dateCreation'] : '') < $__since) continue;
+        $row = array();
+        foreach ($__cols as $c) {
+          $v = isset($o[$c]) ? $o[$c] : '';
+          if (is_array($v) || is_object($v)) $v = '';
+          $row[] = $v;
+        }
+        $__out[] = $row;
+      }
+      /* الأحدث فاللول (نفس ترتيب الـCRM) */
+      usort($__out, function($a, $b) {
+        if ($a[1] === $b[1]) return ((float)$b[0] < (float)$a[0]) ? -1 : (((float)$b[0] > (float)$a[0]) ? 1 : 0);
+        return strcmp((string)$b[1], (string)$a[1]);
+      });
+      crm_out(array(
+        'ok'   => true,
+        't'    => isset($__d['paraveda_orders_v5']['t']) ? (int)$__d['paraveda_orders_v5']['t'] : 0,
+        'cols' => $__cols,
+        'rows' => $__out,
+      ));
+    }
+
     crm_out(array('ok'=>false, 'err'=>'unknown-export'), 400);
   }
 
