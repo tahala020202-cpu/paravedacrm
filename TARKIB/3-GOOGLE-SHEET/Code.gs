@@ -26,7 +26,26 @@ const CRM_TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 
 /* v2: بادئة CRM_ باش ما يتضاربش مع الأوراق ديالك.
    (المستخدم عندو أصلاً ورقة سميتها COMMANDES فيها خدمتو) */
-const SH_CMD = 'CRM_COMMANDES', SH_ADS = 'CRM_ADS', SH_PERF = 'CRM_PERF';
+/* الطلبيات كيدخلو مباشرة لورقة المستخدم */
+const TARGET_SHEET = 'COMMANDES';   // سمية الورقة ديالك
+const HEADER_ROW   = 8;             // السطر ديال الرأس (date | date | CONFIRMATION | ...)
+const SH_ADS = 'CRM_ADS', SH_PERF = 'CRM_PERF';
+
+/* الرأس ديالك → الخانة ديال الـCRM.
+   السكريبت كيقرا الرأس ديالك فالسطر 8 وكيطابقو لوحدو.
+   الأعمدة لي ما كيعرفهومش كيخليهم كيف ما هوما. */
+const COL_MAP = {
+  confirmation:'statut', statut:'statut', remarques:'remarques', remarque:'remarques',
+  id:'idCmd', idcmd:'idCmd', nomprenom:'nom', nom:'nom', client:'nom',
+  telephone:'telephone', tel:'telephone', ville:'ville', adress:'adresse', adresse:'adresse',
+  qte:'qte', quantite:'qte', prix:'prix', produit:'produit',
+  suivie:'livraison', suivi:'livraison', livraison:'livraison',
+  upsel:'upsell', upsell:'upsell', agent:'agent', agente:'agent',
+  carousell:'carousell', carosell:'carosellFlag', link:'link', lien:'link',
+  originlead:'originLead', commision:'commission', commission:'commission',
+  fees:'fees', livreur:'livreur', tracking:'tracking', motif:'motif',
+  dateexp:'dateExp', datelive:'dateLiv', dateliv:'dateLiv'
+};
 const ADS_COLS  = ['id', 'date', 'agent', 'produit', 'source', 'amount'];
 const PERF_COLS = ['date','agent','produit','source','amount','count','conf','livre','retour','ca','cpl'];
 const AR = {
@@ -56,6 +75,7 @@ function onOpen() {
     .addItem('⏹️  وقّف التحديث الأوتوماتيكي', 'pvAutoOff')
     .addSeparator()
     .addItem('🛠️  وجّد الأوراق (أول مرة)', 'pvSetup')
+    .addItem('🗑️  حيّد ورقة CRM_COMMANDES', 'pvRemoveOldSheet')
     .addToUi();
 }
 
@@ -133,14 +153,86 @@ function pvDate_(v) {
 
 function pvProps_() { return PropertiesService.getDocumentProperties(); }
 
+/** كينقّي سمية العمود: صغير، بلا شدّات، بلا فراغات ولا رموز */
+function pvNorm_(v) {
+  return String(v == null ? '' : v)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * كيقرا الرأس ديالك وكيبني: رقم العمود → الخانة ديال الـCRM.
+ * «date» الأولى = تاريخ الطلبية · «date» الثانية = تاريخ التأكيد.
+ */
+function pvMapHeader_(headers) {
+  const map = {}; let dateSeen = 0;
+  headers.forEach((h, i) => {
+    const n = pvNorm_(h);
+    if (!n) return;
+    if (n === 'date') { map[i] = (dateSeen++ === 0) ? 'dateCreation' : 'dateConfirmation'; return; }
+    if (COL_MAP[n]) map[i] = COL_MAP[n];
+  });
+  return map;
+}
+
+/** كيجمع أرقام الأعمدة المتلاصقة فمجموعات باش نكتبو بأقل عدد ديال العمليات */
+function pvRuns_(idx) {
+  const a = idx.slice().sort((x, y) => x - y), out = [];
+  let s = null, p = null;
+  a.forEach(i => {
+    if (s === null) { s = p = i; return; }
+    if (i === p + 1) { p = i; return; }
+    out.push([s, p - s + 1]); s = p = i;
+  });
+  if (s !== null) out.push([s, p - s + 1]);
+  return out;
+}
+
 /* ════════════ ① أول مرة ════════════ */
 
 function pvSetup() {
-  const j = pvCall_('?export=orders');
-  pvSheet_(SH_CMD, j.cols);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(TARGET_SHEET);
+  if (!sh) throw new Error('ما لقيتش ورقة "' + TARGET_SHEET + '".\n' +
+                           'تأكد من السمية، ولا بدّل TARGET_SHEET فوق فالسكريبت.');
+
+  const headers = sh.getRange(HEADER_ROW, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0];
+  const map = pvMapHeader_(headers);
+  const n = Object.keys(map).length;
+  if (!n) throw new Error('ما لقيت حتى عمود كنعرفو فالسطر ' + HEADER_ROW + ' ديال "' + TARGET_SHEET + '".\n' +
+                          'تأكد بلي HEADER_ROW هو السطر الصحيح ديال الرأس.');
+
+  /* 🛡️ نسخة احتياطية، مرة وحدة، قبل أول كتابة */
+  if (!pvProps_().getProperty('backupDone')) {
+    const stamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyyMMdd-HHmm');
+    sh.copyTo(ss).setName(TARGET_SHEET + '_SAUVEGARDE_' + stamp);
+    pvProps_().setProperty('backupDone', '1');
+    pvToast_('🛡️ درت نسخة احتياطية: ' + TARGET_SHEET + '_SAUVEGARDE_' + stamp);
+  }
+
   pvSheet_(SH_ADS, ADS_COLS);
   pvSheet_(SH_PERF, PERF_COLS);
-  pvToast_('✅ الأوراق واجدين. دابا دير «🔄 حدّث كلشي دابا».');
+
+  const names = Object.keys(map).map(i => headers[i]).join(' · ');
+  SpreadsheetApp.getUi().alert(
+    '✅ واجد\n\n' +
+    'الورقة: ' + TARGET_SHEET + '\n' +
+    'الرأس: السطر ' + HEADER_ROW + '\n' +
+    'الأعمدة لي غادي تتعمّر (' + n + '):\n' + names + '\n\n' +
+    '⚠️ من السطر ' + (HEADER_ROW + 1) + ' لتحت غادي يتعاود كتابتو فكل تحديث.\n' +
+    'السطور 1 حتى ' + HEADER_ROW + ' ما غاديش يتمسو.\n\n' +
+    'دابا دير «🔄 حدّث كلشي دابا».');
+}
+
+/** كيحيّد ورقة CRM_COMMANDES القديمة إلا كانت */
+function pvRemoveOldSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('CRM_COMMANDES');
+  if (!sh) { pvToast_('ما كايناش ورقة CRM_COMMANDES.'); return; }
+  ss.deleteSheet(sh);
+  const owned = JSON.parse(pvProps_().getProperty('owned') || '[]');
+  pvProps_().setProperty('owned', JSON.stringify(owned.filter(x => x !== 'CRM_COMMANDES')));
+  pvToast_('🗑️ تحيدات ورقة CRM_COMMANDES.');
 }
 
 /* ════════════ ② الطلبيات: CRM → الشيت ════════════ */
@@ -148,15 +240,47 @@ function pvSetup() {
 function pvPullOrders() {
   const j = pvCall_('?export=orders');
   const cols = j.cols, rows = j.rows || [];
-  const sh = pvSheet_(SH_CMD, cols);
-  pvWrite_(sh, cols, rows);
-  // التاريخ كنخليوه نص باش ما يقلبوش غوغل
-  if (rows.length) {
-    sh.getRange(2, 2, rows.length, 2).setNumberFormat('@');
-    sh.getRange(2, 1, rows.length, 1).setNumberFormat('0');
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(TARGET_SHEET);
+  if (!sh) throw new Error('ما لقيتش ورقة "' + TARGET_SHEET + '". دير «🛠️ وجّد الأوراق».');
+
+  const width = Math.max(sh.getLastColumn(), 1);
+  const headers = sh.getRange(HEADER_ROW, 1, 1, width).getValues()[0];
+  const map = pvMapHeader_(headers);                    // رقم العمود → خانة الـCRM
+  const idx = Object.keys(map).map(Number);
+  if (!idx.length) throw new Error('ما لقيت حتى عمود كنعرفو فالسطر ' + HEADER_ROW + '.');
+
+  const at = {};                                        // خانة الـCRM → رقمها فالجواب
+  cols.forEach((c, i) => { at[c] = i; });
+
+  const start = HEADER_ROW + 1;
+
+  /* نمسحو غير الأعمدة لي كنعمروها — الأعمدة ديالك الأخرى كنخليوهم */
+  const lastRow = sh.getLastRow();
+  if (lastRow >= start) {
+    pvRuns_(idx).forEach(r => sh.getRange(start, r[0] + 1, lastRow - start + 1, r[1]).clearContent());
   }
+
+  /* نكتبو مجموعة بمجموعة ديال الأعمدة المتلاصقة */
+  if (rows.length) {
+    const need = start + rows.length - 1;
+    if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
+    pvRuns_(idx).forEach(r => {
+      const block = rows.map(src => {
+        const out = [];
+        for (let c = r[0]; c < r[0] + r[1]; c++) {
+          const f = map[c];
+          const v = (f !== undefined && at[f] !== undefined) ? src[at[f]] : '';
+          out.push(v === null || v === undefined ? '' : v);
+        }
+        return out;
+      });
+      sh.getRange(start, r[0] + 1, block.length, r[1]).setValues(block);
+    });
+  }
+
   pvProps_().setProperty('ordT', String(j.t || 0));
-  pvToast_('📋 ' + rows.length + ' طلبية فورقة ' + SH_CMD + '.');
+  pvToast_('📋 ' + rows.length + ' طلبية فورقة ' + TARGET_SHEET + '.');
   return rows.length;
 }
 
