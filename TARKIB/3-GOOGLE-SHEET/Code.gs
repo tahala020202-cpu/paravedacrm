@@ -18,6 +18,8 @@
 
 // ─────────── ①  بدّل غير هاد السطر ───────────
 
+const PV_VERSION = 'v4-COMONDES';   // ← علامة النسخة
+
 const CRM_URL = 'https://dkhol.xyz/api.php';   // ✅ الدومين ديالك — واجد
 
 const CRM_TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
@@ -74,6 +76,7 @@ function onOpen() {
     .addItem('⏰  فعّل التحديث الأوتوماتيكي', 'pvAutoOn')
     .addItem('⏹️  وقّف التحديث الأوتوماتيكي', 'pvAutoOff')
     .addSeparator()
+    .addItem('ℹ️  النسخة وفين كيكتب', 'pvVersion')
     .addItem('🔍  فحص الأعمدة (بلا كتابة)', 'pvCheck')
     .addItem('🛠️  وجّد الأوراق (أول مرة)', 'pvSetup')
     .addItem('🗑️  حيّد ورقة CRM_COMMANDES', 'pvRemoveOldSheet')
@@ -242,6 +245,19 @@ function pvSetup() {
     '⚠️ من السطر ' + (HEADER_ROW + 1) + ' لتحت غادي يتعاود كتابتو فكل تحديث.\n' +
     'السطور 1 حتى ' + HEADER_ROW + ' ما غاديش يتمسو.\n\n' +
     'دابا دير «🔄 حدّث كلشي دابا».');
+}
+
+/** ℹ️ كيورّي النسخة وفين غادي يكتب — بلا ما يبدّل والو */
+function pvVersion() {
+  let where = '', err = '';
+  try { where = pvTarget_().getName(); } catch (e) { err = e.message; }
+  SpreadsheetApp.getUi().alert(
+    'ℹ️ معلومات\n\n' +
+    'النسخة: ' + PV_VERSION + '\n' +
+    'خاصها تكون: v4-COMONDES\n\n' +
+    'الطلبيات غادي تتكتب فورقة: ' + (where || '❌ ما لقيتهاش') + '\n' +
+    'من السطر: ' + (HEADER_ROW + 1) + '\n' +
+    (err ? '\n⚠️ ' + err : ''));
 }
 
 /** 🔍 فحص: كيورّي شمن أعمدة تطابقات — بلا ما يكتب حتى حاجة */
@@ -414,7 +430,7 @@ function pvSyncAll() {
   const n = pvPullOrders();
   try { pvPush(); } catch (e) { Logger.log('ads push: ' + e.message); }
   pvPullPerf();
-  pvToast_('✅ كلشي تحدّث — ' + n + ' طلبية.');
+  pvToast_('✅ ' + n + ' طلبية فورقة «' + pvTarget_().getName() + '» — ' + PV_VERSION);
 }
 
 function pvAutoTick() {
