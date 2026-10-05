@@ -27,7 +27,7 @@ const CRM_TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 /* v2: بادئة CRM_ باش ما يتضاربش مع الأوراق ديالك.
    (المستخدم عندو أصلاً ورقة سميتها COMMANDES فيها خدمتو) */
 /* الطلبيات كيدخلو مباشرة لورقة المستخدم */
-const TARGET_SHEET = 'COMMANDES';   // سمية الورقة ديالك
+const TARGET_SHEET = 'COMONDES';   // سمية الورقة ديالك (بالضبط كيف ما هي فالتبويبة)
 const HEADER_ROW   = 8;             // السطر ديال الرأس (date | date | CONFIRMATION | ...)
 const SH_ADS = 'CRM_ADS', SH_PERF = 'CRM_PERF';
 
@@ -74,6 +74,7 @@ function onOpen() {
     .addItem('⏰  فعّل التحديث الأوتوماتيكي', 'pvAutoOn')
     .addItem('⏹️  وقّف التحديث الأوتوماتيكي', 'pvAutoOff')
     .addSeparator()
+    .addItem('🔍  فحص الأعمدة (بلا كتابة)', 'pvCheck')
     .addItem('🛠️  وجّد الأوراق (أول مرة)', 'pvSetup')
     .addItem('🗑️  حيّد ورقة CRM_COMMANDES', 'pvRemoveOldSheet')
     .addToUi();
@@ -153,6 +154,27 @@ function pvDate_(v) {
 
 function pvProps_() { return PropertiesService.getDocumentProperties(); }
 
+/**
+ * كيلقا الورقة الهدف حتى إلا كانت السمية مكتوبة بشوية فرق
+ * (COMONDES / COMMANDES / فراغات زايدة...).
+ */
+function pvTarget_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(TARGET_SHEET);
+  if (sh) return sh;
+  const want = pvNorm_(TARGET_SHEET);
+  const all = ss.getSheets();
+  for (let i = 0; i < all.length; i++) if (pvNorm_(all[i].getName()) === want) return all[i];
+  // تسامح: COMONDES ≈ COMMANDES
+  const loose = want.replace(/m+/g, 'm');
+  for (let i = 0; i < all.length; i++) {
+    if (pvNorm_(all[i].getName()).replace(/m+/g, 'm') === loose) return all[i];
+  }
+  throw new Error('ما لقيتش ورقة "' + TARGET_SHEET + '".\n\n' +
+    'الأوراق لي كاينين:\n' + all.map(x => '• ' + x.getName()).join('\n') +
+    '\n\nبدّل TARGET_SHEET فوق فالسكريبت بالسمية الصحيحة.');
+}
+
 /** كينقّي سمية العمود: صغير، بلا شدّات، بلا فراغات ولا رموز */
 function pvNorm_(v) {
   return String(v == null ? '' : v)
@@ -192,9 +214,7 @@ function pvRuns_(idx) {
 
 function pvSetup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName(TARGET_SHEET);
-  if (!sh) throw new Error('ما لقيتش ورقة "' + TARGET_SHEET + '".\n' +
-                           'تأكد من السمية، ولا بدّل TARGET_SHEET فوق فالسكريبت.');
+  const sh = pvTarget_();
 
   const headers = sh.getRange(HEADER_ROW, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0];
   const map = pvMapHeader_(headers);
@@ -205,9 +225,9 @@ function pvSetup() {
   /* 🛡️ نسخة احتياطية، مرة وحدة، قبل أول كتابة */
   if (!pvProps_().getProperty('backupDone')) {
     const stamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyyMMdd-HHmm');
-    sh.copyTo(ss).setName(TARGET_SHEET + '_SAUVEGARDE_' + stamp);
+    sh.copyTo(ss).setName(sh.getName() + '_SAUVEGARDE_' + stamp);
     pvProps_().setProperty('backupDone', '1');
-    pvToast_('🛡️ درت نسخة احتياطية: ' + TARGET_SHEET + '_SAUVEGARDE_' + stamp);
+    pvToast_('🛡️ درت نسخة احتياطية: ' + sh.getName() + '_SAUVEGARDE_' + stamp);
   }
 
   pvSheet_(SH_ADS, ADS_COLS);
@@ -216,12 +236,34 @@ function pvSetup() {
   const names = Object.keys(map).map(i => headers[i]).join(' · ');
   SpreadsheetApp.getUi().alert(
     '✅ واجد\n\n' +
-    'الورقة: ' + TARGET_SHEET + '\n' +
+    'الورقة: ' + sh.getName() + '\n' +
     'الرأس: السطر ' + HEADER_ROW + '\n' +
     'الأعمدة لي غادي تتعمّر (' + n + '):\n' + names + '\n\n' +
     '⚠️ من السطر ' + (HEADER_ROW + 1) + ' لتحت غادي يتعاود كتابتو فكل تحديث.\n' +
     'السطور 1 حتى ' + HEADER_ROW + ' ما غاديش يتمسو.\n\n' +
     'دابا دير «🔄 حدّث كلشي دابا».');
+}
+
+/** 🔍 فحص: كيورّي شمن أعمدة تطابقات — بلا ما يكتب حتى حاجة */
+function pvCheck() {
+  const sh = pvTarget_();
+  const width = Math.max(sh.getLastColumn(), 1);
+  const headers = sh.getRange(HEADER_ROW, 1, 1, width).getValues()[0];
+  const map = pvMapHeader_(headers);
+  const L = i => { let s = '', n = i + 1; while (n > 0) { s = String.fromCharCode(65 + (n - 1) % 26) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const ok = [], no = [];
+  headers.forEach((h, i) => {
+    const t = String(h == null ? '' : h).trim();
+    if (map[i]) ok.push('✅ ' + L(i) + '  «' + t + '»  →  ' + map[i]);
+    else if (t) no.push('➖ ' + L(i) + '  «' + t + '»  (غادي تبقى كيف ما هي)');
+  });
+  SpreadsheetApp.getUi().alert(
+    '🔍 فحص — ما كتبت والو\n\n' +
+    'الورقة: ' + sh.getName() + '\n' +
+    'الرأس: السطر ' + HEADER_ROW + '\n' +
+    'الطلبيات غادي تبدا من السطر ' + (HEADER_ROW + 1) + '\n\n' +
+    'غادي تتعمّر (' + ok.length + '):\n' + (ok.join('\n') || '(والو!)') +
+    '\n\nما غاديش تتمس (' + no.length + '):\n' + (no.join('\n') || '—'));
 }
 
 /** كيحيّد ورقة CRM_COMMANDES القديمة إلا كانت */
@@ -241,8 +283,7 @@ function pvPullOrders() {
   const j = pvCall_('?export=orders');
   const cols = j.cols, rows = j.rows || [];
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName(TARGET_SHEET);
-  if (!sh) throw new Error('ما لقيتش ورقة "' + TARGET_SHEET + '". دير «🛠️ وجّد الأوراق».');
+  const sh = pvTarget_();
 
   const width = Math.max(sh.getLastColumn(), 1);
   const headers = sh.getRange(HEADER_ROW, 1, 1, width).getValues()[0];
@@ -280,7 +321,7 @@ function pvPullOrders() {
   }
 
   pvProps_().setProperty('ordT', String(j.t || 0));
-  pvToast_('📋 ' + rows.length + ' طلبية فورقة ' + TARGET_SHEET + '.');
+  pvToast_('📋 ' + rows.length + ' طلبية فورقة ' + sh.getName() + '.');
   return rows.length;
 }
 

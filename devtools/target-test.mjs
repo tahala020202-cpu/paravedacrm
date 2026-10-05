@@ -13,6 +13,7 @@ for(let r=8;r<20;r++){ for(let c=0;c<W;c++) grid[r][c]='قديم'+r; }
 
 let props={};
 const sheet={
+  getName:()=>'COMONDES',
   getLastColumn:()=>W, getLastRow:()=>20, getMaxRows:()=>R,
   insertRowsAfter:()=>{}, getFrozenRows:()=>1, setFrozenRows(){},
   copyTo:()=>({setName:n=>{copies.push(n)}}),
@@ -23,7 +24,7 @@ const sheet={
     setNumberFormat(){return this}, setFontWeight(){return this},
     setBackground(){return this}, setFontColor(){return this} };}
 };
-const copies=[]; const sheets=new Map([['COMMANDES',sheet]]);
+const copies=[]; const sheets=new Map([['COMONDES',sheet]]);
 let alerted='';
 const ORD={ok:true,t:1,cols:['id','dateCreation','dateConfirmation','statut','remarques','idCmd','nom',
  'telephone','ville','adresse','qte','prix','produit','livraison','upsell','carousell','agent','link',
@@ -36,6 +37,7 @@ const ORD={ok:true,t:1,cols:['id','dateCreation','dateConfirmation','statut','re
 const ctx=vm.createContext({
   SpreadsheetApp:{getActiveSpreadsheet:()=>({
       getSheetByName:n=>sheets.get(n)||null,
+      getSheets:()=>[...sheets.values()],
       insertSheet:n=>{const s={...sheet};sheets.set(n,s);return s},
       toast:()=>{}, getSpreadsheetTimeZone:()=>'UTC', deleteSheet:n=>{}}),
     getUi:()=>({alert:m=>{alerted=m}, createMenu:()=>({addItem(){return this},addSeparator(){return this},addToUi(){}})})},
