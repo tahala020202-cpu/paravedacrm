@@ -128,6 +128,17 @@ if (tabEls.length) {
   else console.log('  زر "شوف المزيد" : (ما كاينش — كل الزبناء عندهم ≤3 طلبيات)');
 }
 
+  const fixBtn = q('button').find(b => (b.textContent||'').includes('صلّح الأرقام'));
+  console.log('  زر إصلاح الأرقام:', fixBtn ? '✅ ' + fixBtn.textContent.trim() : '❌');
+  if (fixBtn) {
+    window.confirm = () => true; let alerted = '';
+    window.alert = m => { alerted = m; };
+    click(fixBtn); await sleep(3000);
+    console.log('  بعد الضغط      :', alerted || '(بلا رسالة)');
+    const still = q('button').find(b => (b.textContent||'').includes('صلّح الأرقام'));
+    console.log('  الزر اختافى؟   :', still ? '⚠️ باقي: '+still.textContent.trim() : '✅ إيه');
+  }
+
 console.log('\n=== runtime errors ===');
 console.log(errors.length ? errors.slice(0, 8).join('\n') : '  none ✅');
 process.exit(errors.length ? 1 : 0);
