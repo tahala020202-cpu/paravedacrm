@@ -609,6 +609,50 @@ if ($m === 'GET') {
       ));
     }
 
+    if ($__what === 'csv') {
+      /* v3.95: CSV مباشر لـ Google Sheets عبر IMPORTDATA() — بلا Apps Script.
+       * الأعمدة بنفس ترتيب ورقة COMONDES: A حتى M. بلا رأس. */
+      $__ord = isset($__d['paraveda_orders_v5']['d']) ? crm_unwrap($__d['paraveda_orders_v5']['d']) : array();
+      if (!is_array($__ord)) $__ord = array();
+      $__c = array('dateCreation','dateConfirmation','statut','remarques','idCmd','nom',
+                   'telephone','ville','adresse','qte','prix','produit','livraison');
+      $__rows = array();
+      foreach ($__ord as $o) {
+        if (!is_array($o) || !empty($o['_del'])) continue;
+        $__rows[] = $o;
+      }
+      usort($__rows, function($a, $b) {
+        $x = isset($a['dateCreation']) ? (string)$a['dateCreation'] : '';
+        $y = isset($b['dateCreation']) ? (string)$b['dateCreation'] : '';
+        if ($x === $y) {
+          $ai = isset($a['id']) ? (float)$a['id'] : 0; $bi = isset($b['id']) ? (float)$b['id'] : 0;
+          return ($bi < $ai) ? -1 : (($bi > $ai) ? 1 : 0);
+        }
+        return strcmp($y, $x);
+      });
+      $out = '';
+      foreach ($__rows as $o) {
+        $line = array();
+        foreach ($__c as $c) {
+          $v = isset($o[$c]) ? $o[$c] : '';
+          if (is_array($v) || is_object($v)) $v = '';
+          $v = (string)$v;
+          /* الهاتف: فراغ رفيع فاللول باش Google Sheets ما يحيدش الصفر */
+          /* &plain=1 كيحيد الحماية إلا كان عمود الهاتف معمول "نص عادي" فالشيت */
+          if ($c === 'telephone' && $v !== '' && $v[0] === '0' && empty($_GET['plain']))
+            $v = "\xE2\x80\x8B" . $v;
+          $line[] = '"' . str_replace('"', '""', $v) . '"';
+        }
+        $out .= implode(',', $line) . "\r\n";
+      }
+      if (!headers_sent()) {
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: inline; filename="commandes.csv"');
+      }
+      echo $out;
+      exit;
+    }
+
     crm_out(array('ok'=>false, 'err'=>'unknown-export'), 400);
   }
 
