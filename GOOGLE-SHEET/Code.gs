@@ -12,7 +12,7 @@
 
 // ─────────── الإعدادات ───────────
 
-const PV_VERSION   = 'v6-SIMPLE';
+const PV_VERSION   = 'v7';
 const CRM_URL      = 'https://paraveda.store/api.php';
 const CRM_TOKEN    = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 const TARGET_SHEET = 'COMONDES';   // سمية الورقة ديالك
@@ -46,6 +46,7 @@ function onOpen() {
     .addSeparator()
     .addItem('🔍  فحص الأعمدة (بلا كتابة)', 'pvCheck')
     .addItem('🗑️  حيّد الأوراق الزايدة', 'pvCleanup')
+    .addItem('🩺  اختبر الاتصال بالسيرفر', 'pvPing')
     .addItem('ℹ️  النسخة وفين كيكتب', 'pvVersion')
     .addToUi();
 }
@@ -55,16 +56,29 @@ function onOpen() {
 function pvProps_() { return PropertiesService.getDocumentProperties(); }
 
 function pvCall_(qs) {
-  const res = UrlFetchApp.fetch(CRM_URL + (qs || ''), {
-    muteHttpExceptions: true,
-    headers: { 'X-Sync-Token': CRM_TOKEN },
-    followRedirects: true,
-  });
+  /* التوكن كيتصيفط فالـheader وفالرابط بجوج — شي استضافات كتحيد الـheaders */
+  const url = CRM_URL + (qs || '') + (qs && qs.indexOf('?') === 0 ? '&' : '?') +
+              'token=' + encodeURIComponent(CRM_TOKEN);
+  let res;
+  try {
+    res = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true,
+      headers: { 'X-Sync-Token': CRM_TOKEN },
+      followRedirects: true,
+    });
+  } catch (e) {
+    throw new Error('ما قدرناش نوصلو للسيرفر.\n\nالرابط:\n' + url + '\n\n' + e.message);
+  }
   const code = res.getResponseCode(), body = res.getContentText();
-  if (code === 403) throw new Error('التوكن غالط (403). شوف CRM_TOKEN.');
-  if (code !== 200) throw new Error('السيرفر رجع ' + code + ' — ' + body.slice(0, 200));
+  if (code === 403) throw new Error('التوكن غالط (403).\n\nالرابط:\n' + url);
+  if (code === 404) throw new Error(
+    '❌ 404 — ما كاينش api.php فهاد الرابط:\n\n' + url +
+    '\n\nصلّح السطر CRM_URL فوق فالسكريبت.\n' +
+    'جرّب الرابط فالمتصفح: إلا عطاك {"ok":true...} راه صحيح.');
+  if (code !== 200) throw new Error('السيرفر رجع ' + code + '\n\nالرابط:\n' + url +
+                                    '\n\n' + body.slice(0, 200));
   try { return JSON.parse(body); }
-  catch (e) { throw new Error('جواب ماشي JSON — تأكد من CRM_URL.\n' + body.slice(0, 200)); }
+  catch (e) { throw new Error('جواب ماشي JSON.\n\nالرابط:\n' + url + '\n\n' + body.slice(0, 200)); }
 }
 
 function pvToast_(m) {
@@ -213,6 +227,23 @@ function pvCleanup() {
   pvToast_('🗑️ تحيدو: ' + found.join(' · '));
 }
 
+/* ═══════════ اختبار الاتصال ═══════════ */
+
+function pvPing() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const j = pvCall_('?export=stats');
+    ui.alert('✅ الاتصال خدام\n\n' +
+      'الرابط: ' + CRM_URL + '\n\n' +
+      'الطلبيات الحية : ' + j.live_orders + '\n' +
+      'الممسوحة       : ' + j.deleted + '\n' +
+      'من ' + j.oldest + ' إلى ' + j.newest + '\n\n' +
+      'دابا تقدر دير «📋 جبد الطلبيات دابا».');
+  } catch (e) {
+    ui.alert('❌ الاتصال ما خدامش\n\n' + e.message);
+  }
+}
+
 /* ═══════════ معلومات ═══════════ */
 
 function pvVersion() {
@@ -221,7 +252,7 @@ function pvVersion() {
   const extra = OLD_SHEETS.filter(n => SpreadsheetApp.getActiveSpreadsheet().getSheetByName(n));
   SpreadsheetApp.getUi().alert(
     'ℹ️ معلومات\n\n' +
-    'النسخة: ' + PV_VERSION + '   (خاصها تكون v6-SIMPLE)\n' +
+    'النسخة: ' + PV_VERSION + '   (خاصها تكون v7)\n' +
     'السيرفر: ' + CRM_URL + '\n\n' +
     'الطلبيات كتتكتب فورقة: ' + (where || '❌ ما لقيتهاش') + '\n' +
     'من السطر: ' + (HEADER_ROW + 1) + '\n\n' +
