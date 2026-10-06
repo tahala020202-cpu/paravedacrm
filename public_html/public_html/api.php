@@ -576,6 +576,38 @@ if ($m === 'GET') {
       ));
     }
 
+    if ($__what === 'stats') {
+      /* v3.93: تشخيص — كيعطي الأرقام ديال الطلبيات بلا ما يحمّل الداتا كاملة */
+      $__ord = isset($__d['paraveda_orders_v5']['d']) ? crm_unwrap($__d['paraveda_orders_v5']['d']) : array();
+      if (!is_array($__ord)) $__ord = array();
+      $live = 0; $del = 0; $nodate = 0; $bymonth = array(); $min = ''; $max = '';
+      foreach ($__ord as $o) {
+        if (!is_array($o)) continue;
+        if (!empty($o['_del'])) { $del++; continue; }
+        $live++;
+        $dt = isset($o['dateCreation']) ? (string)$o['dateCreation'] : '';
+        if ($dt === '') { $nodate++; continue; }
+        $m = substr($dt, 0, 7);
+        $bymonth[$m] = (isset($bymonth[$m]) ? $bymonth[$m] : 0) + 1;
+        if ($min === '' || $dt < $min) $min = $dt;
+        if ($max === '' || $dt > $max) $max = $dt;
+      }
+      ksort($bymonth);
+      crm_out(array(
+        'ok'            => true,
+        'total_rows'    => count($__ord),
+        'live_orders'   => $live,
+        'deleted'       => $del,
+        'without_date'  => $nodate,
+        'oldest'        => $min,
+        'newest'        => $max,
+        'by_month'      => $bymonth,
+        'data_file_kb'  => round(@filesize($DATA_FILE) / 1024),
+        'journal_kb'    => round(@filesize($JOURNAL) / 1024),
+        'orders_t'      => isset($__d['paraveda_orders_v5']['t']) ? (int)$__d['paraveda_orders_v5']['t'] : 0,
+      ));
+    }
+
     crm_out(array('ok'=>false, 'err'=>'unknown-export'), 400);
   }
 

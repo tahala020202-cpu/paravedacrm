@@ -18,9 +18,9 @@
 
 // ─────────── ①  بدّل غير هاد السطر ───────────
 
-const PV_VERSION = 'v4-COMONDES';   // ← علامة النسخة
+const PV_VERSION = 'v5-COMONDES';   // ← علامة النسخة
 
-const CRM_URL = 'https://dkhol.xyz/api.php';   // ✅ الدومين ديالك — واجد
+const CRM_URL = 'https://paraveda.store/api.php';   // ✅ الدومين ديالك — واجد
 
 const CRM_TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 
@@ -254,7 +254,7 @@ function pvVersion() {
   SpreadsheetApp.getUi().alert(
     'ℹ️ معلومات\n\n' +
     'النسخة: ' + PV_VERSION + '\n' +
-    'خاصها تكون: v4-COMONDES\n\n' +
+    'خاصها تكون: v5-COMONDES\n\n' +
     'الطلبيات غادي تتكتب فورقة: ' + (where || '❌ ما لقيتهاش') + '\n' +
     'من السطر: ' + (HEADER_ROW + 1) + '\n' +
     (err ? '\n⚠️ ' + err : ''));
