@@ -101,7 +101,8 @@ $ALLOWED_KEYS = array(
   'paraveda_perfrows_v1','paraveda_livraison_v1','paraveda_history_v1','paraveda_villes_v2',
   'paraveda_catalog_v1','sheet_pièce','paraveda_team_photos_v1','tabs_list_v1',
   'custom_sheets_v1','paraveda_period_v1','paraveda_period_v2',
-  'paraveda_backup_v1','paraveda_backup_v1_agents'
+  'paraveda_backup_v1','paraveda_backup_v1_agents',
+  'paraveda_dupok_v1'   // v3.94: المكررات لي تعلّمات «ماشي مكررة»
 );
 
 /* ---------- helpers ---------- */
