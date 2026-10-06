@@ -616,6 +616,22 @@ if ($m === 'GET') {
       if (!is_array($__ord)) $__ord = array();
       $__c = array('dateCreation','dateConfirmation','statut','remarques','idCmd','nom',
                    'telephone','ville','adresse','qte','prix','produit','livraison');
+      /* v3.96: &cols=upsell  ولا  &cols=agent,link  → كيرجع غير داك/هادوك الأعمدة،
+       * بنفس ترتيب السطور. مفيد للأعمدة لي جايين بعد M فالشيت. */
+      if (!empty($_GET['cols'])) {
+        $__allf = array('id','dateCreation','dateConfirmation','statut','remarques','idCmd','nom',
+                        'telephone','ville','adresse','qte','prix','produit','livraison','upsell',
+                        'carousell','agent','link','carosellFlag','originLead','commission','fees',
+                        'livreur','tracking','dateExp','dateLiv','motif');
+        $__sel = array();
+        foreach (explode(',', (string)$_GET['cols']) as $__r) {
+          $__r = trim($__r);
+          if ($__r === '') continue;
+          foreach ($__allf as $__f) { if (strcasecmp($__f, $__r) === 0) { $__sel[] = $__f; break; } }
+        }
+        if (!$__sel) crm_out(array('ok'=>false,'err'=>'bad-cols','allowed'=>$__allf), 400);
+        $__c = $__sel;
+      }
       $__rows = array();
       foreach ($__ord as $o) {
         if (!is_array($o) || !empty($o['_del'])) continue;
