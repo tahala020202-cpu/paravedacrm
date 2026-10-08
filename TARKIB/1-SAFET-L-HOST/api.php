@@ -6,6 +6,9 @@
  *   GET  api.php                       → { key: {t, d}, ... }
  *   POST api.php {key, t, d}           → {ok:true, t:<effective t>}   (header X-Sync-Token required)
  *
+ * v3.97 — الشيت → CRM: POST {action:'sheet_orders', rows:[...]} كيزيد الطلبيات الجداد
+ *   (تكرار سيرفر-سايد: تاريخ + هاتف + منتوج). الجبد الكامل من CRM ما تبدلش.
+ *
  * v3.82 — التسليك النهائي: تغيير الباسوورد كيوصل للسيرفر + يوزر ممسوح ما كيرجعش
  *   + المتصفح كيعاود يصيفط اليوزرز/الطلبيات إلا لقا السيرفر راهو رجع لنسخة قديمة.
  *   POST api.php {action: ...}         → Digylog actions  (header X-Sync-Token required)
@@ -455,6 +458,146 @@ function crm_write_all($data) {
   return $ok;
 }
 
+/* ================================================================
+ * v3.97 — الشيت → CRM (Storeep / Google Sheet → الطلبيات)
+ *   POST api.php {action:'sheet_orders', rows:[{dateCreation, nom, telephone, ...}]}
+ *   كيزيد غير الطلبيات الجداد. التكرار كيتحسب سيرفر-سايد بـ:
+ *     التاريخ + الهاتف (آخر 9 أرقام) + المنتوج   (إلا ما كاينش هاتف → الاسم)
+ *   فالتالي إلا تصيفطات نفس السطر مرتين، ما كيتزادش مرتين.
+ *   كيرجع: {ok, added, dup, skip, t, results:[{i, st:'added'|'dup'|'skip', id?, why?}]}
+ * ================================================================ */
+function crm_sheet_text($v) {
+  if ($v === null || is_array($v) || is_object($v)) return '';
+  return trim((string)$v);
+}
+function crm_sheet_num($v, $def) {
+  if ($v === null || is_array($v) || is_object($v)) return $def;
+  $s = str_replace(',', '.', trim((string)$v));
+  if ($s === '' || !is_numeric($s)) return $def;
+  $f = (float)$s;
+  return ($f == floor($f)) ? (int)$f : $f;
+}
+/* صيغ مقبولة: YYYY-MM-DD (وبالساعة) ولا DD/MM/YYYY (ولا DD-MM-YYYY) */
+function crm_sheet_date($v) {
+  $s = crm_sheet_text($v);
+  if ($s === '') return '';
+  if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) { $y = (int)$m[1]; $mo = (int)$m[2]; $d = (int)$m[3]; }
+  elseif (preg_match('/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/', $s, $m)) { $d = (int)$m[1]; $mo = (int)$m[2]; $y = (int)$m[3]; }
+  else return null;   // ماشي تاريخ صحيح
+  return checkdate($mo, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $mo, $d) : null;
+}
+/* الهاتف: غير الأرقام، +212 / 212 → 0، ورقم 9 أرقام بلا 0 → كنزيدو 0 */
+function crm_sheet_phone($v) {
+  $d = preg_replace('/\D+/', '', crm_sheet_text($v));
+  if (strlen($d) === 12 && strpos($d, '212') === 0) $d = '0' . substr($d, 3);
+  elseif (strlen($d) === 9 && $d[0] !== '0') $d = '0' . $d;
+  return $d;
+}
+function crm_sheet_key($date, $phone, $nom, $produit) {
+  $p = crm_sheet_phone($phone);
+  $p9 = strlen($p) >= 9 ? substr($p, -9) : '';
+  $who = $p9 !== '' ? 'p:' . $p9
+                    : 'n:' . strtolower(preg_replace('/\s+/u', ' ', crm_sheet_text($nom)));
+  return $date . '|' . $who . '|' . strtolower(preg_replace('/\s+/u', ' ', crm_sheet_text($produit)));
+}
+/* كينقّي سطر الشيت ويحوّلو لطلبية CRM. كيرجع [سبب الرفض|null, الطلبية|null] */
+function crm_sheet_norm($r) {
+  $raw = isset($r['dateCreation']) ? $r['dateCreation'] : '';
+  $dc = crm_sheet_date($raw);
+  if ($dc === null || $dc === '') return array(crm_sheet_text($raw) === '' ? 'no-date' : 'bad-date', null);
+  $tel = crm_sheet_phone(isset($r['telephone']) ? $r['telephone'] : '');
+  $nom = crm_sheet_text(isset($r['nom']) ? $r['nom'] : '');
+  if ($tel === '' && $nom === '') return array('no-name-or-phone', null);
+
+  $o = array();
+  $o['dateCreation'] = $dc;
+  $dco = crm_sheet_date(isset($r['dateConfirmation']) ? $r['dateConfirmation'] : '');
+  $o['dateConfirmation'] = ($dco === null || $dco === '') ? $dc : $dco;
+  foreach (array('dateExp', 'dateLiv') as $f) {
+    $x = crm_sheet_date(isset($r[$f]) ? $r[$f] : '');
+    $o[$f] = ($x === null) ? '' : $x;
+  }
+  $o['telephone'] = $tel;
+  $o['nom'] = $nom;
+  foreach (array('idCmd','ville','adresse','produit','statut','livraison','remarques','agent','link',
+                 'carousell','carosellFlag','originLead','livreur','tracking','motif','fees') as $f) {
+    $o[$f] = crm_sheet_text(isset($r[$f]) ? $r[$f] : '');
+  }
+  $o['qte']        = max(1, (int)crm_sheet_num(isset($r['qte']) ? $r['qte'] : '', 1));
+  $o['prix']       = crm_sheet_num(isset($r['prix']) ? $r['prix'] : '', 0);
+  $o['upsell']     = crm_sheet_num(isset($r['upsell']) ? $r['upsell'] : '', 0);
+  $o['commission'] = crm_sheet_num(isset($r['commission']) ? $r['commission'] : '', 0);
+  return array(null, $o);
+}
+function crm_sheet_orders($b) {
+  global $LOCK_FILE;
+  $rows = (isset($b['rows']) && is_array($b['rows'])) ? array_values($b['rows']) : null;
+  if ($rows === null) crm_out(array('ok'=>false, 'err'=>'bad-rows'), 400);
+  if (count($rows) > 2000) crm_out(array('ok'=>false, 'err'=>'too-many-rows', 'max'=>2000), 413);
+
+  $fh = @fopen($LOCK_FILE, 'c');
+  if ($fh) @flock($fh, LOCK_EX);
+
+  $data = crm_read_raw(true);
+  $cur = isset($data['paraveda_orders_v5']['d']) ? crm_unwrap($data['paraveda_orders_v5']['d']) : array();
+  if (!is_array($cur)) $cur = array();
+  $cur = array_values($cur);
+  $prevT = isset($data['paraveda_orders_v5']['t']) ? (int)$data['paraveda_orders_v5']['t'] : 0;
+
+  /* مفاتيح الطلبيات الموجودة (الحية) + أكبر id (حتى الممسوحة) باش ما نعاودوش نستعملو id */
+  $keys = array(); $maxId = 0;
+  foreach ($cur as $o) {
+    if (!is_array($o)) continue;
+    if (isset($o['id']) && is_numeric($o['id']) && (int)$o['id'] > $maxId) $maxId = (int)$o['id'];
+    if (!empty($o['_del'])) continue;
+    $keys[crm_sheet_key(
+      isset($o['dateCreation']) ? (string)$o['dateCreation'] : '',
+      isset($o['telephone'])    ? $o['telephone'] : '',
+      isset($o['nom'])          ? $o['nom'] : '',
+      isset($o['produit'])      ? $o['produit'] : ''
+    )] = true;
+  }
+
+  $nowms  = (int)(microtime(true) * 1000);
+  $nextId = max((int)(microtime(true) * 1000000), $maxId + 1);
+  $out = array(); $added = 0; $dup = 0; $skip = 0;
+  foreach ($rows as $i => $r) {
+    if (!is_array($r)) { $out[] = array('i'=>$i, 'st'=>'skip', 'why'=>'bad-row'); $skip++; continue; }
+    list($why, $o) = crm_sheet_norm($r);
+    if ($why !== null) { $out[] = array('i'=>$i, 'st'=>'skip', 'why'=>$why); $skip++; continue; }
+    $k = crm_sheet_key($o['dateCreation'], $o['telephone'], $o['nom'], $o['produit']);
+    if (isset($keys[$k])) { $out[] = array('i'=>$i, 'st'=>'dup'); $dup++; continue; }
+
+    $o['id'] = $nextId++;
+    $o['_u'] = $nowms;
+    $f = array();
+    foreach ($o as $fk => $fv) { if ($fk !== 'id' && $fk !== '_u') $f[$fk] = $nowms; }
+    $o['_f'] = $f;
+
+    $cur[] = $o;
+    $keys[$k] = true;
+    $out[] = array('i'=>$i, 'st'=>'added', 'id'=>$o['id']);
+    $added++;
+  }
+
+  if ($added === 0) {
+    if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
+    if ($skip > 0) crm_audit("sheet-orders | added=0 | dup=$dup | skip=$skip");
+    crm_out(array('ok'=>true, 'added'=>0, 'dup'=>$dup, 'skip'=>$skip, 'results'=>$out));
+  }
+
+  crm_backup();
+  $t = max($prevT + 1, $nowms);
+  $data['paraveda_orders_v5'] = array('t' => $t, 'd' => $cur);
+  $ok = crm_write_all($data);
+  if ($ok) crm_journal_append('paraveda_orders_v5', $t, $cur);
+  if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
+
+  if (!$ok) crm_out(array('ok'=>false, 'err'=>'write-failed'), 500);
+  crm_audit("sheet-orders | added=$added | dup=$dup | skip=$skip | t=$t");
+  crm_out(array('ok'=>true, 'added'=>$added, 'dup'=>$dup, 'skip'=>$skip, 't'=>$t, 'results'=>$out));
+}
+
 $m = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 /* ---------- GET: full snapshot ---------- */
@@ -733,6 +876,7 @@ if ($m === 'POST') {
     $a = (string)$b['action'];
     if ($a === 'ping') crm_out(array('ok'=>true, 'v'=>'3.83'));
     if ($a === 'restore') crm_out(array('ok'=>false, 'err'=>'restore-not-implemented', 'msg'=>'الاسترجاع كيدار يدوياً من مجلد backups'), 501);
+    if ($a === 'sheet_orders') crm_sheet_orders($b);   // v3.97: الشيت → CRM
     if (strpos($a, 'digylog') === 0) crm_out(array('ok'=>false, 'err'=>'digylog-removed', 'msg'=>'الربط مع Digylog تحيد فـ v3.41'), 410);
     crm_out(array('ok'=>false, 'err'=>'unknown-action'), 400);
   }

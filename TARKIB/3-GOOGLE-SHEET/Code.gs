@@ -1,10 +1,13 @@
 /**
  * ═══════════════════════════════════════════════════════════
- *  Paraveda CRM  →  Google Sheets
- *  الطلبيات كيدخلو مباشرة لورقة COMONDES ديالك. وصافي.
+ *  Paraveda CRM  ⇄  Google Sheets
+ *  ⬅️ الشيت → CRM : الطلبيات الجداد (Storeep) كيتصيفطو لـCRM أوتوماتيكياً (كل 5 دقايق)
+ *  ➡️ CRM → الشيت : الطلبيات كيتجبدو لورقة COMONDES (كل 10 دقايق)
  * ═══════════════════════════════════════════════════════════
  *
- *  ✅ كيكتب غير فورقة COMONDES، من السطر 9 لتحت
+ *  ✅ الجبد كيبدا دايماً بالصيفط: ما كيتمسحش ولا طلبية جديدة من الشيت
+ *  ✅ التكرار ما كيقع: السيرفر كيعرف الطلبية بالتاريخ + الهاتف + المنتوج
+ *  ✅ كيكتب فورقة COMONDES، من السطر 9 لتحت
  *  ✅ السطور 1 حتى 8 (الإحصائيات + الرأس) ما كيتمسوش
  *  ✅ الأعمدة لي ماشي ديال الـCRM كتبقى كيف ما هي
  *  ❌ ما كيصاوب حتى ورقة جديدة
@@ -12,7 +15,7 @@
 
 // ─────────── الإعدادات ───────────
 
-const PV_VERSION   = 'v7';
+const PV_VERSION   = 'v8';
 const CRM_URL      = 'https://paraveda.store/api.php';
 const CRM_TOKEN    = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 const TARGET_SHEET = 'COMONDES';   // سمية الورقة ديالك
@@ -39,6 +42,7 @@ const COL_MAP = {
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('🔗 Paraveda CRM')
+    .addItem('📥  صيفط الطلبيات الجداد للـCRM دابا', 'pvPushManual')
     .addItem('📋  جبد الطلبيات دابا', 'pvPullOrders')
     .addSeparator()
     .addItem('⏰  فعّل التحديث الأوتوماتيكي', 'pvAutoOn')
@@ -139,6 +143,15 @@ const pvL_ = i => { let s = '', n = i + 1; while (n > 0) { s = String.fromCharCo
 /* ═══════════ الأساسي: الطلبيات → COMONDES ═══════════ */
 
 function pvPullOrders() {
+  /* 1) الأول نصيفطو الطلبيات الجداد لي دخلات للشيت (Storeep) → CRM.
+   *    باش ما تتمسحوش ملي نكتبو الشيت من CRM. */
+  const sync = pvPushNewOrders_();
+  if (sync.skip) {
+    throw new Error('⚠️ ماقدرناش نجبدو الطلبيات حيت ' + sync.skip + ' سطر ماتصيفطاتش للـCRM ' +
+                    '(باش ما يتمسحوش من الشيت):\n\n• ' + sync.skipped.slice(0, 10).join('\n• ') +
+                    '\n\nصلّح هاد الأسطر (التاريخ / الاسم أو الهاتف)، وعاود.');
+  }
+
   const j = pvCall_('?export=orders');
   const cols = j.cols, rows = j.rows || [];
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -161,6 +174,11 @@ function pvPullOrders() {
   const at = {};
   cols.forEach((c, i) => { at[c] = i; });
   const start = HEADER_ROW + 1;
+
+  /* 🛡️ إلا دخلات طلبيات جداد للشيت وسط هاد العملية، ما كنمسحوش — عاود مرة أخرى */
+  if (sh.getLastRow() !== sync.lastRow) {
+    throw new Error('الشيت تبدل وانت كتجبد (طلبية جديدة دخلات). عاود المحاولة دابا.');
+  }
 
   /* كنمسحو غير الأعمدة لي كنعمروها — الأعمدة ديالك الأخرى كيبقاو */
   const lastRow = sh.getLastRow();
@@ -187,6 +205,114 @@ function pvPullOrders() {
 
   pvToast_('📋 ' + rows.length + ' طلبية فورقة ' + sh.getName());
   return rows.length;
+}
+
+/* ═══════════ الشيت → CRM: الطلبيات الجداد ═══════════ */
+
+const PV_WHY_ = {
+  'no-date':          'ماكاينش تاريخ',
+  'bad-date':         'التاريخ ماشي صحيح (خاصو يكون 2026-10-08 ولا 08/10/2026)',
+  'no-name-or-phone': 'خاصها اسم ولا رقم الهاتف',
+  'bad-row':          'سطر غالط',
+};
+
+/** كيصيفط طلب POST للسيرفر (بنفس التوكن ديال القراية) */
+function pvPost_(body) {
+  const url = CRM_URL + '?token=' + encodeURIComponent(CRM_TOKEN);
+  let res;
+  try {
+    res = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(body),
+      headers: { 'X-Sync-Token': CRM_TOKEN },
+      muteHttpExceptions: true,
+      followRedirects: false,
+    });
+  } catch (e) {
+    throw new Error('ما قدرناش نوصلو للسيرفر (صيفط).\n\nالرابط:\n' + CRM_URL + '\n\n' + e.message);
+  }
+  const code = res.getResponseCode(), text = res.getContentText();
+  if (code === 403) throw new Error('التوكن غالط (403).');
+  if (code >= 300 && code < 400) throw new Error('السيرفر حوّل الطلب (' + code + ').\n\nخاص CRM_URL يكون https:// مباشرة.');
+  if (code !== 200) throw new Error('السيرفر رجع ' + code + '\n\n' + text.slice(0, 200));
+  let j;
+  try { j = JSON.parse(text); }
+  catch (e) { throw new Error('جواب ماشي JSON.\n\n' + text.slice(0, 200)); }
+  if (!j.ok) throw new Error('السيرفر رفض الطلب: ' + (j.err || 'unknown'));
+  return j;
+}
+
+/**
+ * كيقرا كل الأسطر ديال COMONDES وكيصيفط للـCRM اللي ماكاينينش.
+ * التكرار كيتحسب فالسيرفر، فإعادة الصيفط ما كتزيد حتى طلبية مرتين.
+ * كيرجع: { added, dup, skip, skipped:[...], lastRow }
+ */
+function pvPushNewOrders_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = pvTarget_();
+  const width = Math.max(sh.getLastColumn(), 1);
+  const headers = sh.getRange(HEADER_ROW, 1, 1, width).getValues()[0];
+  const map = pvMapHeader_(headers);
+  const cols = Object.keys(map).map(Number);
+  const lastRow = sh.getLastRow();
+  const out = { added: 0, dup: 0, skip: 0, skipped: [], lastRow: lastRow };
+  if (!cols.length) {
+    throw new Error('ما لقيت حتى عمود كنعرفو فالسطر ' + HEADER_ROW + ' ديال "' + sh.getName() + '".');
+  }
+  if (lastRow <= HEADER_ROW) return out;
+
+  const tz = ss.getSpreadsheetTimeZone();
+  const vals = sh.getRange(HEADER_ROW + 1, 1, lastRow - HEADER_ROW, width).getValues();
+  const rows = [], refs = [];
+  vals.forEach((line, k) => {
+    const o = {};
+    cols.forEach(c => {
+      let v = line[c];
+      if (v instanceof Date) v = Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+      v = (v === null || v === undefined) ? '' : String(v).trim();
+      const f = map[c];
+      if (o[f] === undefined || o[f] === '') o[f] = v;
+    });
+    if (!o.nom && !o.telephone && !o.produit && !o.dateCreation) return;   // سطر خاوي
+    rows.push(o);
+    refs.push(HEADER_ROW + 1 + k);
+  });
+
+  const CHUNK = 500;
+  for (let s = 0; s < rows.length; s += CHUNK) {
+    const j = pvPost_({ action: 'sheet_orders', rows: rows.slice(s, s + CHUNK) });
+    (j.results || []).forEach(r => {
+      if (r.st === 'added') out.added++;
+      else if (r.st === 'dup') out.dup++;
+      else {
+        out.skip++;
+        out.skipped.push('سطر ' + refs[s + r.i] + ': ' + (PV_WHY_[r.why] || r.why || '?'));
+      }
+    });
+  }
+  if (out.added) pvToast_('📥 تزادو ' + out.added + ' طلبية جديدة للـCRM');
+  return out;
+}
+
+function pvPushManual() {
+  const ui = SpreadsheetApp.getUi();
+  let r;
+  try { r = pvPushNewOrders_(); }
+  catch (e) { ui.alert('❌ ماتصيفطات حتى طلبية\n\n' + e.message); return; }
+  ui.alert('📥 الصيفط للـCRM — سالا\n\n' +
+    '✅ تزادو جداد : ' + r.added + '\n' +
+    '➖ كانو deja فـCRM : ' + r.dup + '\n' +
+    '⚠️ ماتصيفطاتش : ' + r.skip +
+    (r.skipped.length ? '\n\n' + r.skipped.slice(0, 15).join('\n') : ''));
+}
+
+/** تريغر كل 5 دقايق: كيصيفط غير الجداد (ما كيكتبش فالشيت — آمن) */
+function pvPushTick() {
+  try {
+    const r = pvPushNewOrders_();
+    Logger.log('push: +' + r.added + ' dup=' + r.dup + ' skip=' + r.skip);
+  } catch (e) { Logger.log('push: ' + e.message); }
 }
 
 /* ═══════════ فحص (بلا كتابة) ═══════════ */
@@ -252,7 +378,7 @@ function pvVersion() {
   const extra = OLD_SHEETS.filter(n => SpreadsheetApp.getActiveSpreadsheet().getSheetByName(n));
   SpreadsheetApp.getUi().alert(
     'ℹ️ معلومات\n\n' +
-    'النسخة: ' + PV_VERSION + '   (خاصها تكون v7)\n' +
+    'النسخة: ' + PV_VERSION + '   (خاصها تكون v8)\n' +
     'السيرفر: ' + CRM_URL + '\n\n' +
     'الطلبيات كتتكتب فورقة: ' + (where || '❌ ما لقيتهاش') + '\n' +
     'من السطر: ' + (HEADER_ROW + 1) + '\n\n' +
@@ -268,13 +394,15 @@ function pvAutoTick() {
 
 function pvAutoOn() {
   pvAutoOff();
-  ScriptApp.newTrigger('pvAutoTick').timeBased().everyMinutes(10).create();
-  pvToast_('⏰ التحديث الأوتوماتيكي مفعّل — كل 10 دقائق.');
+  ScriptApp.newTrigger('pvPushTick').timeBased().everyMinutes(5).create();    // الشيت → CRM
+  ScriptApp.newTrigger('pvAutoTick').timeBased().everyMinutes(10).create();   // CRM → الشيت (كيصيفط الجداد قبلو)
+  pvToast_('⏰ مفعّل: الطلبيات الجداد كل 5 دقائق — والجبد من CRM كل 10 دقائق.');
 }
 
 function pvAutoOff() {
   ScriptApp.getProjectTriggers().forEach(t => {
-    if (t.getHandlerFunction() === 'pvAutoTick') ScriptApp.deleteTrigger(t);
+    const h = t.getHandlerFunction();
+    if (h === 'pvAutoTick' || h === 'pvPushTick') ScriptApp.deleteTrigger(t);
   });
   pvToast_('⏹️ التحديث الأوتوماتيكي موقّف.');
 }
