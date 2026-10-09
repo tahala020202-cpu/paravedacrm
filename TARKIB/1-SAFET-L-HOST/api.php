@@ -6,6 +6,7 @@
  *   GET  api.php                       → { key: {t, d}, ... }
  *   POST api.php {key, t, d}           → {ok:true, t:<effective t>}   (header X-Sync-Token required)
  *
+ * v3.99 — إشعار أوتوماتيك ملي تدخل/تتبدل طلبية باسم بنت (CRM + الشيت)
  * v3.98 — توزيع الطلبيات الجداد على: Meryam → AYA → imane → safa (بالدور) + ID ديما = 1
  * v3.97 — الشيت → CRM: POST {action:'sheet_orders', rows:[...]} كيزيد الطلبيات الجداد
  *   (تكرار سيرفر-سايد: تاريخ + هاتف + منتوج). الجبد الكامل من CRM ما تبدلش.
@@ -660,6 +661,31 @@ function crm_push_test($b) {
  *   فالتالي إلا تصيفطات نفس السطر مرتين، ما كيتزادش مرتين.
  *   كيرجع: {ok, added, dup, skip, t, results:[{i, st:'added'|'dup'|'skip', id?, why?}]}
  * ================================================================ */
+/* v3.99: إشعار أوتوماتيك لكل طلبية جديدة باسم بنت (من الشيت ولا زيدتيها بيدك)
+ *   أو ملي تبدل لها الطلبية للاسم ديالها. كيحسب غير التغييرات الطرية (دقيقتين)،
+ *   وكيوقف إلا كانو بزاف (حماية من الاستيراد/الاسترجاع). */
+function crm_push_collect_changes($old, $new, $nowms) {
+  $oldBy = array();
+  if (is_array($old)) { foreach ($old as $o) { if (is_array($o) && isset($o['id'])) $oldBy[(string)$o['id']] = $o; } }
+  $by = array(); $n = 0;
+  foreach ($new as $o) {
+    if (!is_array($o) || !empty($o['_del']) || !isset($o['id'])) continue;
+    $ag = trim((string)(isset($o['agent']) ? $o['agent'] : ''));
+    if ($ag === '') continue;
+    $prev = isset($oldBy[(string)$o['id']]) ? $oldBy[(string)$o['id']] : null;
+    if ($prev !== null && trim((string)(isset($prev['agent']) ? $prev['agent'] : '')) === $ag) continue;
+    $when = (float)(isset($o['_u']) ? $o['_u'] : 0);
+    if (isset($o['_f']['agent'])) $when = max($when, (float)$o['_f']['agent']);
+    if ($when < $nowms - 120000) continue;
+    $by[$ag][] = array(
+      'nom'    => (string)(isset($o['nom']) ? $o['nom'] : ''),
+      'produit'=> (string)(isset($o['produit']) ? $o['produit'] : ''),
+      'ville'  => (string)(isset($o['ville']) ? $o['ville'] : ''),
+    );
+    $n++;
+  }
+  return ($n > 30) ? array() : $by;
+}
 function crm_sheet_text($v) {
   if ($v === null || is_array($v) || is_object($v)) return '';
   return trim((string)$v);
@@ -1245,6 +1271,7 @@ if ($m === 'POST') {
       $d = array_slice($d, 0, 400);
     }
   }
+  $pushBy = ($k === 'paraveda_orders_v5' && is_array($d)) ? crm_push_collect_changes(isset($data[$k]['d']) ? $data[$k]['d'] : array(), $d, $now) : array();
   $data[$k] = array('t' => max($prevT + 1, $t), 'd' => $d);   // v3.81: t رتيب ديما — كتابة جديدة كيشوفها كلشي حتى من جهاز ساعتو متأخرة
   $effT = $data[$k]['t'];
   $ok = crm_write_all($data);
@@ -1253,6 +1280,7 @@ if ($m === 'POST') {
 
   if (!$ok) crm_out(array('ok'=>false, 'err'=>'write-failed'), 500);
   crm_audit("write | $k | t=$effT | bytes=" . strlen($newJson));
+  if (!empty($pushBy)) { try { crm_push_batch($pushBy); } catch (Throwable $__e) { crm_audit('push-error | ' . $__e->getMessage()); } }   // v3.99
   crm_out(array('ok'=>true, 't'=>$effT));
 }
 

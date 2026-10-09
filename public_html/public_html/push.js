@@ -2,20 +2,21 @@
 (function () {
   'use strict';
   var TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';   // نفس التوكن ديال CRM
-  var NAMES = ['Meryam', 'AYA', 'imane', 'safa'];                  // غير إلا ما كانش حساب مرتبط بالبنت
+  var NAMES = ['Meryam', 'AYA', 'imane', 'safa'];                  // للأدمين فقط (ما عندوش حساب بالبنت)
   var KEY = 'pv_push_agent';          // البنت لي مرتبطة بهاد الهاتف
   var EP_KEY = 'pv_push_endpoint';    // آخر عنوان إشعارات تسجل فالسيرفر
+  var HIDE_KEY = 'pv_push_hide_until';
   var SESSION_KEY = 'paraveda_session_v1';
   var USERS_KEY = 'paraveda_users_v1';
 
   var supported = ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   var isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-  var IOS_MSG = 'على آيفون: الإشعارات كتخدم غير من الشاشة الرئيسية.\n\n1) فـSafari كليكي على زر Partager (⬆️)\n2) ختار Sur l\'écran d\'accueil (زيد للشاشة الرئيسية)\n3) حل CRM من الأيقونة الجديدة\n4) من هناك كليكي على 🔔 الإشعارات';
+  var IOS_MSG = 'على آيفون: الإشعارات كتخدم غير من الشاشة الرئيسية.\n\n1) فـSafari كليكي على زر Partager (⬆️)\n2) ختار Sur l\'écran d\'accueil (زيد للشاشة الرئيسية)\n3) حل CRM من الأيقونة الجديدة';
   var reg = null;
   if (supported) navigator.serviceWorker.register('sw.js').then(function (r) { reg = r; }).catch(function () {});
 
-  /* البنت لي داخلة دابا (من الحساب ديالها). ماكاينش حساب = ''  */
+  /* سمية البنت لي داخلة بحسابها. الأدمين ولا من بلا حساب = '' */
   function myAgent() {
     try {
       var sid = localStorage.getItem(SESSION_KEY);
@@ -23,6 +24,9 @@
       var me = users.find(function (u) { return String(u.id) === String(sid) && !u._del; });
       return (me && me.agent) ? String(me.agent) : '';
     } catch (e) { return ''; }
+  }
+  function isSubscribedHere(agent) {
+    return Notification.permission === 'granted' && localStorage.getItem(KEY) === agent;
   }
   function b64uToBytes(s) {
     s = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -34,7 +38,7 @@
   function toast(msg) {
     var t = document.createElement('div');
     t.textContent = msg;
-    t.style.cssText = 'position:fixed;bottom:70px;left:12px;z-index:100000;background:#0f172a;color:#fff;padding:10px 14px;border-radius:10px;font:14px system-ui;max-width:80vw;box-shadow:0 4px 14px rgba(0,0,0,.25)';
+    t.style.cssText = 'position:fixed;bottom:70px;left:12px;z-index:100001;background:#0f172a;color:#fff;padding:10px 14px;border-radius:10px;font:14px system-ui;max-width:80vw;box-shadow:0 4px 14px rgba(0,0,0,.25)';
     document.body.appendChild(t);
     setTimeout(function () { t.remove(); }, 4000);
   }
@@ -46,7 +50,7 @@
     }).then(function (r) { return r.json(); });
   }
 
-  /* يسجل الهاتف عند السيرفر باسم البنت (خاص الإذن يكون مسموح) */
+  /* كيسجل الهاتف عند السيرفر باسم البنت (الإذن خاص يكون مسموح) */
   async function subscribe(agent) {
     var r = reg || await navigator.serviceWorker.ready;
     var kj = await (await fetch('api.php?pushkey=1&token=' + TOKEN, { cache: 'no-store' })).json();
@@ -59,14 +63,14 @@
     localStorage.setItem(EP_KEY, sub.endpoint);
     return agent;
   }
-  /* بالضغط على الزر (خاص ضغطة وحدة أول مرة فقط) */
+  /* الضغطة الوحيدة: كتسول الإذن (Allow) وكتسجل الهاتف */
   async function enable(agent) {
     if (isIOS && !isStandalone) throw new Error(IOS_MSG);
     var perm = await Notification.requestPermission();
     if (perm !== 'granted') throw new Error('خاص تسماح بالإشعارات.');
     return subscribe(agent);
   }
-  /* بلا ضغط: إلا كان الإذن مسموح وكاين حساب، كيتسجل وحدو (ولا كيحوّل الهاتف لحساب آخر) */
+  /* بلا ضغط: إلا الإذن مسموح وكاين حساب، كيتسجل وحدو (وكيتصحح إلا تبدل الحساب) */
   var syncing = false;
   async function autoSync() {
     if (!supported || syncing || Notification.permission !== 'granted') return;
@@ -83,44 +87,105 @@
     finally { syncing = false; }
   }
 
+  /* بانر وحدة: كيبان للبنت غير ملي ما تكونش فعّلات الإشعارات */
+  function banner() {
+    if (!supported || document.getElementById('pv-push-banner')) return;
+    var a = myAgent();
+    if (!a || Notification.permission !== 'default') return;
+    if (Number(localStorage.getItem(HIDE_KEY) || 0) > Date.now()) return;
+    var box = document.createElement('div');
+    box.id = 'pv-push-banner';
+    box.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:100002;background:#0f766e;color:#fff;padding:12px 14px;border-radius:14px;font:14px system-ui;direction:rtl;width:min(92vw,380px);box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;justify-content:space-between';
+    var txt = document.createElement('div');
+    txt.textContent = isIOS && !isStandalone
+      ? '🔔 باش توصلك الطلبيات ديالك، زيد CRM للشاشة الرئيسية (Partager ← Sur l\'écran d\'accueil)'
+      : '🔔 فعّل الإشعارات باش توصلك الطلبيات ديالك (مرة وحدة)';
+    box.appendChild(txt);
+    var right = document.createElement('div');
+    right.style.cssText = 'display:flex;gap:6px;flex-shrink:0';
+    if (!(isIOS && !isStandalone)) {
+      var ok = document.createElement('button');
+      ok.textContent = 'تفعيل';
+      ok.style.cssText = 'padding:7px 12px;border-radius:10px;border:none;background:#fff;color:#0f766e;font-weight:700;cursor:pointer';
+      ok.onclick = function () {
+        ok.disabled = true; ok.textContent = '...';
+        enable(a).then(function () {
+          toast('✅ الإشعارات مفعّلة. غادي توصلك الطلبيات ديالك.');
+          box.remove();
+        }).catch(function (e) {
+          toast('❌ ' + e.message);
+          ok.disabled = false; ok.textContent = 'تفعيل';
+        });
+      };
+      right.appendChild(ok);
+    }
+    var x = document.createElement('button');
+    x.textContent = '✕';
+    x.style.cssText = 'padding:7px 10px;border-radius:10px;border:none;background:rgba(255,255,255,.2);color:#fff;cursor:pointer';
+    x.onclick = function () {
+      localStorage.setItem(HIDE_KEY, String(Date.now() + 12 * 3600 * 1000));
+      box.remove();
+    };
+    right.appendChild(x);
+    box.appendChild(right);
+    document.body.appendChild(box);
+  }
+
   function panel() {
     if (!supported) { alert(isIOS ? IOS_MSG : 'المتصفح ديالك ما كيدعمش الإشعارات. جرب Chrome.'); return; }
     var old = document.getElementById('pv-push-panel');
     if (old) { old.remove(); return; }
+    var me = myAgent();
     var box = document.createElement('div');
     box.id = 'pv-push-panel';
     box.style.cssText = 'position:fixed;bottom:70px;left:12px;z-index:100000;background:#fff;border:1px solid #cbd5e1;border-radius:14px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,.2);font:14px system-ui;direction:rtl;width:240px';
     var h = document.createElement('div');
     h.style.cssText = 'font-weight:700;margin-bottom:8px';
-    var me = myAgent();
-    var names = me ? [me] : NAMES;          // البنت كتشوف سميتها غير
-    h.textContent = me ? '🔔 الإشعارات' : '🔔 الإشعارات — شكون نتي؟';
+    h.textContent = '🔔 الإشعارات';
     box.appendChild(h);
-    names.forEach(function (n) {
-      var b = document.createElement('button');
-      var done = Notification.permission === 'granted' && localStorage.getItem(KEY) === n;
-      b.textContent = done ? '✅ ' + n : n;
-      b.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px;border-radius:10px;border:1px solid #0f766e;background:#f0fdfa;color:#0f766e;font-weight:600;cursor:pointer';
-      b.onclick = function () {
-        b.disabled = true; b.textContent = '...';
-        enable(n).then(function (a) {
-          toast('✅ الإشعارات مفعّلة لـ ' + a);
-          box.remove();
-        }).catch(function (e) {
-          toast('❌ ' + e.message);
-          b.disabled = false; b.textContent = n;
-        });
-      };
-      box.appendChild(b);
-    });
+
+    if (me) {
+      var st = document.createElement('div');
+      st.style.cssText = 'margin:6px 0;color:#0f766e;font-weight:600';
+      st.textContent = isSubscribedHere(me) ? '✅ مفعّلة' : '⚠️ ماشي مفعّلة بعد';
+      box.appendChild(st);
+      if (!isSubscribedHere(me)) {
+        var b = document.createElement('button');
+        b.textContent = 'تفعيل';
+        b.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px;border-radius:10px;border:1px solid #0f766e;background:#f0fdfa;color:#0f766e;font-weight:600;cursor:pointer';
+        b.onclick = function () {
+          b.disabled = true; b.textContent = '...';
+          enable(me).then(function () { toast('✅ الإشعارات مفعّلة'); box.remove(); })
+            .catch(function (e) { toast('❌ ' + e.message); b.disabled = false; b.textContent = 'تفعيل'; });
+        };
+        box.appendChild(b);
+      }
+    } else {
+      var t2 = document.createElement('div');
+      t2.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:6px';
+      t2.textContent = 'شكون نتي؟ (للأدمين)';
+      box.appendChild(t2);
+      NAMES.forEach(function (n) {
+        var nb = document.createElement('button');
+        nb.textContent = n;
+        nb.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px;border-radius:10px;border:1px solid #0f766e;background:#f0fdfa;color:#0f766e;font-weight:600;cursor:pointer';
+        nb.onclick = function () {
+          nb.disabled = true;
+          enable(n).then(function () { toast('✅ مفعّلة لـ ' + n); box.remove(); })
+            .catch(function (e) { toast('❌ ' + e.message); nb.disabled = false; });
+        };
+        box.appendChild(nb);
+      });
+    }
+
     var test = document.createElement('button');
     test.textContent = '🧪 إشعار تجريبي';
     test.style.cssText = 'display:block;width:100%;margin-top:10px;padding:8px;border-radius:10px;border:none;background:#e2e8f0;cursor:pointer';
     test.onclick = function () {
       var a = localStorage.getItem(KEY) || me;
-      if (!a) { toast('ختار سميتك الأول'); return; }
+      if (!a) { toast('ماكاين حساب مرتبط'); return; }
       api({ action: 'push_test', agent: a }).then(function (j) {
-        toast(j.sent ? '📨 تصيفط للهاتف' : '⚠️ ما وصلش، عاود فعّل الإشعارات');
+        toast(j.sent ? '📨 تصيفط للهاتف' : '⚠️ ما وصلش، فعّل الإشعارات من جديد');
       });
     };
     box.appendChild(test);
@@ -136,10 +201,14 @@
     document.body.appendChild(b);
   }
 
+  function tick() {
+    autoSync();
+    banner();
+  }
   function start() {
     button();
-    autoSync();
-    setInterval(autoSync, 5000);   // كتشوف الحساب ملي تدخل البنت
+    tick();
+    setInterval(tick, 5000);   // كتشوف الحساب ملي تدخل البنت
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
