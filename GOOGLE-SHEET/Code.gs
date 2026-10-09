@@ -27,7 +27,7 @@ const OLD_SHEETS = ['CRM_COMMANDES', 'CRM_ADS', 'CRM_PERF'];
 /* الرأس ديالك → الخانة ديال الـCRM (السكريبت كيطابق لوحدو) */
 const COL_MAP = {
   confirmation:'statut', statut:'statut', remarques:'remarques', remarque:'remarques',
-  id:'idCmd', idcmd:'idCmd', nomprenom:'nom', nom:'nom', client:'nom',
+  id:'idCmd', idcmd:'idCmd', ordersid:'idCmd', nomprenom:'nom', nom:'nom', client:'nom',
   telephone:'telephone', tel:'telephone', ville:'ville', adress:'adresse', adresse:'adresse',
   qte:'qte', quantite:'qte', prix:'prix', produit:'produit',
   suivie:'livraison', suivi:'livraison', livraison:'livraison',
@@ -119,7 +119,7 @@ function pvMapHeader_(headers) {
   headers.forEach((h, i) => {
     const n = pvNorm_(h);
     if (!n) return;
-    if (n === 'date') { map[i] = (dateSeen++ === 0) ? 'dateCreation' : 'dateConfirmation'; return; }
+    if (n === 'date' || n === 'ordersdate') { map[i] = (dateSeen++ === 0) ? 'dateCreation' : 'dateConfirmation'; return; }   // Date / Order's date (Storeep)
     if (COL_MAP[n]) map[i] = COL_MAP[n];
   });
   return map;
