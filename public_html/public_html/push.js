@@ -25,6 +25,15 @@
       return (me && me.agent) ? String(me.agent) : '';
     } catch (e) { return ''; }
   }
+  /* الزر كيبان غير لي دخل CRM بحساب (البنت ولا الأدمين) */
+  function loggedIn() {
+    try {
+      var sid = localStorage.getItem(SESSION_KEY);
+      if (!sid) return false;
+      var users = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
+      return users.some(function (u) { return String(u.id) === String(sid) && !u._del; });
+    } catch (e) { return false; }
+  }
   function isSubscribedHere(agent) {
     return Notification.permission === 'granted' && localStorage.getItem(KEY) === agent;
   }
@@ -208,11 +217,21 @@
   }
 
   function tick() {
+    var on = loggedIn();
+    var b = document.getElementById('pv-push-btn');
+    if (on && !b) button();
+    if (!on) {
+      if (b) b.remove();
+      var p = document.getElementById('pv-push-panel');
+      if (p) p.remove();
+      var bn = document.getElementById('pv-push-banner');
+      if (bn) bn.remove();
+      return;
+    }
     autoSync();
     banner();
   }
   function start() {
-    button();
     tick();
     setInterval(tick, 5000);   // كتشوف الحساب ملي تدخل البنت
   }
