@@ -6,7 +6,7 @@
  * ═══════════════════════════════════════════════════════════
  *
  *  ✅ كيقرا السميات من السطر HEADER_ROW
- *  ✅ كيصيفط أوتوماتيكياً كل SYNC_EVERY_MIN دقايق
+ *  ✅ كيصيفط أوتوماتيكياً: فور دخول طلبية (تقريباً 20 ثانية)، وشبكة أمان كل دقيقة
  *  ✅ التكرار كيتحسب فالسيرفر: إعادة الصيفط ما كتزيد طلبية مرتين
  *  ✅ الطلبية بلا تاريخ ولا اسم/هاتف كتتجاهل وكتبان فالرسالة
  *
@@ -21,7 +21,6 @@ const CRM_URL         = 'https://paraveda.store/api.php';
 const CRM_TOKEN       = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';
 const TARGET_SHEET    = '';   // '' = أول ورقة فالشيت. ولا دير سمية الورقة (مثلاً 'Orders')
 const HEADER_ROW      = 1;    // السطر ديال السميات (فالشيت الجديد = 1)
-const SYNC_EVERY_MIN  = 5;
 
 /* السميات ديال الشيت → الخانات ديال الـCRM (نفس منطق Code.gs) */
 const IP_COL_MAP = {
@@ -211,15 +210,28 @@ function ipCheck() {
 
 /* ═══════════ الأوتوماتيك ═══════════ */
 
+/*  Google ما كيسمحش بأقل من دقيقة للتريغر بالتوقيت، لهذا:
+ *  1) ملي تدخل طلبية جديدة للشيت → كيصيفط بعد ثواني قليلة (ipOnChange)
+ *  2) كل دقيقة شبكة أمان (ipTick) إلا فاتت شي طلبية
+ */
+
+function ipOnChange() {
+  Utilities.sleep(20000);   // نخليو Storeep يكمل كتابة السطر قبل الصيفط
+  ipTick();
+}
+
 function ipAutoOn() {
   ipAutoOff();
-  ScriptApp.newTrigger('ipTick').timeBased().everyMinutes(SYNC_EVERY_MIN).create();
-  SpreadsheetApp.getActiveSpreadsheet().toast('⏰ الصيفط الأوتوماتيكي مفعّل — كل ' + SYNC_EVERY_MIN + ' دقايق.', 'Paraveda CRM', 6);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.newTrigger('ipOnChange').forSpreadsheet(ss).onChange().create();
+  ScriptApp.newTrigger('ipTick').timeBased().everyMinutes(1).create();
+  ss.toast('⏰ مفعّل: الطلبيات كتتصيفط فور دخولها (تقريباً 20 ثانية)، وشبكة الأمان كل دقيقة.', 'Paraveda CRM', 8);
 }
 
 function ipAutoOff() {
   ScriptApp.getProjectTriggers().forEach(t => {
-    if (t.getHandlerFunction() === 'ipTick') ScriptApp.deleteTrigger(t);
+    const h = t.getHandlerFunction();
+    if (h === 'ipTick' || h === 'ipOnChange') ScriptApp.deleteTrigger(t);
   });
   SpreadsheetApp.getActiveSpreadsheet().toast('⏹️ الصيفط الأوتوماتيكي موقّف.', 'Paraveda CRM', 6);
 }
