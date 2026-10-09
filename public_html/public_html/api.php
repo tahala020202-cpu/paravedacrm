@@ -88,6 +88,8 @@ $BACKUP_DIR  = $PRIMARY . '/backups';
 $AUDIT_FILE  = $PRIMARY . '/audit.log';
 $JOURNAL     = $PRIMARY . '/journal.log';
 $JOURNAL_M   = ($MIRROR !== null) ? $MIRROR . '/journal.log' : null;
+$PUSH_KEYS_FILE = $DATA_DIR . '/push_keys.json';   // v3.98: مفاتيح Web Push (مسدودة من الويب)
+$PUSH_SUBS_FILE = $DATA_DIR . '/push_subs.json';   // v3.98: هواتف البنات (مسدودة من الويب)
 /* PERF v3.90: 8MB journal = replay ديال 8 ميغا JSON فـ كل قراية. 512KB كافيين
  * بزاف حيت كل كتابة كتسبقها كتابة كاملة ديال crm_data.json تحت القفل. */
 $JOURNAL_MAX = 512 * 1024;
@@ -460,6 +462,197 @@ function crm_write_all($data) {
 }
 
 /* ================================================================
+ * v3.98 — إشعارات Web Push للبنات (طلبية جديدة ليها من الشيت)
+ *   push_keys.json : مفاتيح VAPID (كتتولد وحدها أول مرة). مسدودة من الويب (.htaccess)
+ *   push_subs.json : الهواتف المسجّلة {agent, endpoint, p256dh, auth}. مسدودة من الويب
+ *   GET  api.php?pushkey=1&token=...          → المفتاح العام
+ *   POST {action:'push_subscribe', agent, sub:{endpoint, keys:{p256dh, auth}}}
+ *   POST {action:'push_test', agent}          → إشعار تجريبي لهاد البنت
+ *   الإشعارات كتصيفط أوتوماتيك ملي كتدخل طلبيات جداد من الشيت (crm_sheet_orders)
+ * ================================================================ */
+function crm_push_b64e($s) { return rtrim(strtr(base64_encode($s), '+/', '-_'), '='); }
+function crm_push_b64d($s) {
+  $s = strtr((string)$s, '-_', '+/');
+  return base64_decode($s . str_repeat('=', (4 - strlen($s) % 4) % 4), true);
+}
+function crm_push_read($file) {
+  if (!file_exists($file)) return array();
+  $j = json_decode((string)@file_get_contents($file), true);
+  return is_array($j) ? $j : array();
+}
+function crm_push_write($file, $arr) {
+  $tmp = $file . '.tmp.' . getmypid();
+  $json = json_encode($arr, JSON_UNESCAPED_UNICODE);
+  if ($json === false || @file_put_contents($tmp, $json, LOCK_EX) === false) return false;
+  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
+  return true;
+}
+/* نقطة P-256 خام (65 بايت، تبدا بـ 0x04) → مفتاح عام PEM */
+function crm_push_pub_from_raw($raw) {
+  if (!is_string($raw) || strlen($raw) !== 65 || $raw[0] !== "\x04") return false;
+  $der = hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200') . $raw;
+  return @openssl_pkey_get_public("-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n");
+}
+/* مفتاح EC → نقطة عامة خام 65 بايت */
+function crm_push_raw_pub($key) {
+  $d = openssl_pkey_get_details($key);
+  if (!$d || !isset($d['ec']['x'], $d['ec']['y'])) return false;
+  return "\x04" . str_pad($d['ec']['x'], 32, "\x00", STR_PAD_LEFT) . str_pad($d['ec']['y'], 32, "\x00", STR_PAD_LEFT);
+}
+/* مفاتيح VAPID: كتتقرا من الملف، ولا كتتولد أول مرة */
+function crm_push_keys() {
+  global $PUSH_KEYS_FILE;
+  $k = crm_push_read($PUSH_KEYS_FILE);
+  if (!empty($k['priv']) && !empty($k['pub'])) return $k;
+  $key = @openssl_pkey_new(array('curve_name' => 'prime256v1', 'private_key_type' => OPENSSL_KEYTYPE_EC));
+  if (!$key) return null;
+  $pem = '';
+  if (!openssl_pkey_export($key, $pem)) return null;
+  $raw = crm_push_raw_pub($key);
+  if ($raw === false) return null;
+  $k = array('priv' => $pem, 'pub' => crm_push_b64e($raw));
+  return crm_push_write($PUSH_KEYS_FILE, $k) ? $k : null;
+}
+/* توقيع ECDSA (DER) → 64 بايت خام (r||s) كما يطلب JWT */
+function crm_push_der2raw($der) {
+  $p = 2;
+  if (ord($der[1]) & 0x80) $p = 2 + (ord($der[1]) & 0x7f);
+  $rl = ord($der[$p + 1]); $r = substr($der, $p + 2, $rl);
+  $p2 = $p + 2 + $rl;
+  $sl = ord($der[$p2 + 1]); $s = substr($der, $p2 + 2, $sl);
+  return str_pad(ltrim($r, "\x00"), 32, "\x00", STR_PAD_LEFT) . str_pad(ltrim($s, "\x00"), 32, "\x00", STR_PAD_LEFT);
+}
+/* RFC 8292 (VAPID): Authorization header */
+function crm_push_vapid_auth($endpoint) {
+  $k = crm_push_keys();
+  if (!$k) return null;
+  $pk = @openssl_pkey_get_private($k['priv']);
+  if (!$pk) return null;
+  $p = parse_url($endpoint);
+  $aud = $p['scheme'] . '://' . $p['host'] . (isset($p['port']) ? ':' . $p['port'] : '');
+  $h = crm_push_b64e(json_encode(array('typ' => 'JWT', 'alg' => 'ES256')));
+  $b = crm_push_b64e(json_encode(array('aud' => $aud, 'exp' => time() + 12 * 3600, 'sub' => 'mailto:admin@paraveda.ma')));
+  $in = $h . '.' . $b;
+  if (!openssl_sign($in, $der, $pk, OPENSSL_ALGO_SHA256)) return null;
+  return 'vapid t=' . $in . '.' . crm_push_b64e(crm_push_der2raw($der)) . ', k=' . $k['pub'];
+}
+/* RFC 8291: تشفير aes128gcm. $asKey = مفتاح مؤقت جديد لكل رسالة */
+function crm_push_encrypt($payload, $uaPub, $auth, $asKey) {
+  $asPub = crm_push_raw_pub($asKey);
+  $peer  = crm_push_pub_from_raw($uaPub);
+  if ($asPub === false || $peer === false || strlen($auth) !== 16) return null;
+  $ecdh = openssl_pkey_derive($peer, $asKey, 32);
+  if ($ecdh === false) return null;
+  $salt    = random_bytes(16);
+  $ikm     = hash_hkdf('sha256', $ecdh, 32, "WebPush: info\x00" . $uaPub . $asPub, $auth);
+  $cek     = hash_hkdf('sha256', $ikm, 16, "Content-Encoding: aes128gcm\x00", $salt);
+  $nonce   = hash_hkdf('sha256', $ikm, 12, "Content-Encoding: nonce\x00", $salt);
+  $ct = openssl_encrypt($payload . "\x02", 'aes-128-gcm', $cek, OPENSSL_RAW_DATA, $nonce, $tag, '', 16);
+  if ($ct === false) return null;
+  return $salt . pack('N', 4096) . chr(strlen($asPub)) . $asPub . $ct . $tag;
+}
+/* يبني الطلب (بلا ما يصيفطو): [url, headers, body] أو null */
+function crm_push_build($sub, $payload, $asKey = null) {
+  $auth = crm_push_vapid_auth($sub['endpoint']);
+  if ($auth === null) return null;
+  if ($asKey === null) $asKey = @openssl_pkey_new(array('curve_name' => 'prime256v1', 'private_key_type' => OPENSSL_KEYTYPE_EC));
+  if (!$asKey) return null;
+  $body = crm_push_encrypt(json_encode($payload, JSON_UNESCAPED_UNICODE), crm_push_b64d($sub['p256dh']), crm_push_b64d($sub['auth']), $asKey);
+  if ($body === null) return null;
+  return array($sub['endpoint'], array(
+    'Content-Type: application/octet-stream',
+    'Content-Encoding: aes128gcm',
+    'TTL: 3600',
+    'Urgency: high',
+    'Authorization: ' . $auth,
+  ), $body);
+}
+/* يصيفط فعلياً. كيرجع كود HTTP (201 = واصل) ولا 0 إلا فشل */
+function crm_push_post($req) {
+  $ch = curl_init($req[0]);
+  curl_setopt_array($ch, array(
+    CURLOPT_POST => true, CURLOPT_POSTFIELDS => $req[2], CURLOPT_HTTPHEADER => $req[1],
+    CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8,
+  ));
+  curl_exec($ch);
+  $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+  return $code;
+}
+/* خدمات Push المعروفة فقط (باش السيرفر ما يصيفطش لأي عنوان) */
+function crm_push_endpoint_ok($ep) {
+  if (strpos($ep, 'https://') !== 0 || strlen($ep) > 2000) return false;
+  $host = (string)parse_url($ep, PHP_URL_HOST);
+  foreach (array('googleapis.com', 'mozilla.com', 'push.apple.com', 'windows.com') as $ok) {
+    if ($host === $ok || substr($host, -strlen('.' . $ok)) === '.' . $ok) return true;
+  }
+  return false;
+}
+/* يصيفط لكل هواتف البنت. كيحيد الهواتف لي ما بقاوش مسجلين (404/410) */
+function crm_push_to_agent($agent, $payload) {
+  global $PUSH_SUBS_FILE;
+  $subs = crm_push_read($PUSH_SUBS_FILE);
+  $sent = 0; $removed = false; $keep = array();
+  foreach ($subs as $s) {
+    if (!is_array($s) || !isset($s['agent'], $s['endpoint']) || strcasecmp($s['agent'], $agent) !== 0) { $keep[] = $s; continue; }
+    $req = crm_push_build($s, $payload);
+    $code = $req ? crm_push_post($req) : 0;
+    if ($code === 404 || $code === 410) { $removed = true; continue; }
+    if ($code >= 200 && $code < 300) $sent++;
+    else crm_audit('push-fail | ' . $agent . ' | code=' . $code);
+    $keep[] = $s;
+  }
+  if ($removed) crm_push_write($PUSH_SUBS_FILE, $keep);
+  return $sent;
+}
+/* بعد الصيفط من الشيت: إشعار وحدة لكل بنت (بلا ما نصيفطو إشعار لكل طلبية) */
+function crm_push_batch($byAgent) {
+  foreach ($byAgent as $agent => $list) {
+    $n = count($list);
+    if ($n === 0) continue;
+    $lines = array();
+    foreach (array_slice($list, 0, 3) as $o) {
+      $lines[] = trim($o['nom'] . ' · ' . $o['produit'] . ' · ' . $o['ville'], ' ·');
+    }
+    if ($n > 3) $lines[] = '+ ' . ($n - 3) . ' أخرى';
+    crm_push_to_agent($agent, array(
+      'title' => $n === 1 ? '📥 طلبية جديدة ليك' : '📥 عندك ' . $n . ' طلبيات جداد',
+      'body'  => implode("\n", $lines),
+      'url'   => './',
+      'tag'   => 'pv-orders',
+    ));
+  }
+}
+function crm_push_subscribe($b) {
+  global $PUSH_SUBS_FILE;
+  $agent = trim((string)($b['agent'] ?? ''));
+  $sub   = $b['sub'] ?? null;
+  if ($agent === '' || !is_array($sub) || !is_array($sub['keys'] ?? null)) crm_out(array('ok'=>false, 'err'=>'bad-sub'), 400);
+  $ep   = (string)($sub['endpoint'] ?? '');
+  $p256 = (string)($sub['keys']['p256dh'] ?? '');
+  $auth = (string)($sub['keys']['auth'] ?? '');
+  if (!crm_push_endpoint_ok($ep) || strlen(crm_push_b64d($p256)) !== 65 || strlen(crm_push_b64d($auth)) !== 16)
+    crm_out(array('ok'=>false, 'err'=>'bad-sub'), 400);
+  $subs = array();
+  foreach (crm_push_read($PUSH_SUBS_FILE) as $s) {
+    if (is_array($s) && isset($s['endpoint']) && $s['endpoint'] !== $ep) $subs[] = $s;   // نفس الهاتف = تسجيل جديد
+  }
+  $subs[] = array('agent' => $agent, 'endpoint' => $ep, 'p256dh' => $p256, 'auth' => $auth, 't' => time());
+  if (!crm_push_write($PUSH_SUBS_FILE, $subs)) crm_out(array('ok'=>false, 'err'=>'write-failed'), 500);
+  crm_out(array('ok'=>true, 'agent'=>$agent));
+}
+function crm_push_test($b) {
+  $agent = trim((string)($b['agent'] ?? ''));
+  if ($agent === '') crm_out(array('ok'=>false, 'err'=>'bad-agent'), 400);
+  $n = crm_push_to_agent($agent, array(
+    'title' => '🔔 تجربة الإشعارات',
+    'body'  => 'إلا وصلك هاد الإشعار، كل شي خدام مزيان.',
+    'url'   => './', 'tag' => 'pv-test',
+  ));
+  crm_out(array('ok'=>true, 'sent'=>$n));
+}
+
+/* ================================================================
  * v3.97 — الشيت → CRM (Storeep / Google Sheet → الطلبيات)
  *   POST api.php {action:'sheet_orders', rows:[{dateCreation, nom, telephone, ...}]}
  *   كيزيد غير الطلبيات الجداد. التكرار كيتحسب سيرفر-سايد بـ:
@@ -567,6 +760,7 @@ function crm_sheet_orders($b) {
   $nowms  = (int)(microtime(true) * 1000);
   $nextId = max((int)(microtime(true) * 1000000), $maxId + 1);
   $out = array(); $added = 0; $dup = 0; $skip = 0;
+  $addedBy = array();   // v3.98: الطلبيات الجداد لكل بنت (للإشعارات)
   foreach ($rows as $i => $r) {
     if (!is_array($r)) { $out[] = array('i'=>$i, 'st'=>'skip', 'why'=>'bad-row'); $skip++; continue; }
     list($why, $o) = crm_sheet_norm($r);
@@ -588,6 +782,7 @@ function crm_sheet_orders($b) {
     $keys[$k] = true;
     $out[] = array('i'=>$i, 'st'=>'added', 'id'=>$o['id'], 'agent'=>$o['agent']);
     $added++;
+    $addedBy[$o['agent']][] = array('nom'=>$o['nom'], 'produit'=>$o['produit'], 'ville'=>$o['ville']);
   }
 
   if ($added === 0) {
@@ -605,6 +800,7 @@ function crm_sheet_orders($b) {
 
   if (!$ok) crm_out(array('ok'=>false, 'err'=>'write-failed'), 500);
   crm_audit("sheet-orders | added=$added | dup=$dup | skip=$skip | t=$t");
+  try { crm_push_batch($addedBy); } catch (Throwable $__e) { crm_audit('push-error | ' . $__e->getMessage()); }   // v3.98: ما كيوقفش الصيفط
   crm_out(array('ok'=>true, 'added'=>$added, 'dup'=>$dup, 'skip'=>$skip, 't'=>$t, 'results'=>$out));
 }
 
@@ -627,6 +823,10 @@ if ($m === 'GET') {
    *   api.php?export=perf&token=...     → جدول الأداء محسوب (للقراءة فقط)
    * كترجع غير لي محتاج الشيت (بضع كيلوبايتات) عوض 1.1 ميغا.
    * ================================================================ */
+  if (isset($_GET['pushkey'])) {   // v3.98: المفتاح العام ديال Web Push
+    $__pk = crm_push_keys();
+    crm_out($__pk ? array('ok'=>true, 'key'=>$__pk['pub']) : array('ok'=>false, 'err'=>'no-vapid-keys'), $__pk ? 200 : 500);
+  }
   if (isset($_GET['export'])) {
     $__what = (string)$_GET['export'];
     $__d    = crm_read_raw();
@@ -887,6 +1087,8 @@ if ($m === 'POST') {
     if ($a === 'ping') crm_out(array('ok'=>true, 'v'=>'3.83'));
     if ($a === 'restore') crm_out(array('ok'=>false, 'err'=>'restore-not-implemented', 'msg'=>'الاسترجاع كيدار يدوياً من مجلد backups'), 501);
     if ($a === 'sheet_orders') crm_sheet_orders($b);   // v3.97: الشيت → CRM
+    if ($a === 'push_subscribe') crm_push_subscribe($b);   // v3.98
+    if ($a === 'push_test') crm_push_test($b);             // v3.98
     if (strpos($a, 'digylog') === 0) crm_out(array('ok'=>false, 'err'=>'digylog-removed', 'msg'=>'الربط مع Digylog تحيد فـ v3.41'), 410);
     crm_out(array('ok'=>false, 'err'=>'unknown-action'), 400);
   }

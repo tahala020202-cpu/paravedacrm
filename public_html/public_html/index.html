@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Paraveda</title>
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#0f766e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Paraveda" />
+    <link rel="apple-touch-icon" href="pv-icon-180.png" />
     <script type="module" crossorigin>(function(){
   try {
     const _origSetItem = Storage.prototype.setItem;
@@ -1171,5 +1176,6 @@ tr[data-ann="1"] input,tr[data-ann="1"] select,tr[data-ann="1"] textarea{text-de
   </head>
   <body>
     <div id="root"></div>
+    <script src="push.js" defer></script>
   </body>
 </html>

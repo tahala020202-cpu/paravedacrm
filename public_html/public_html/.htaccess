@@ -5,7 +5,7 @@
 #    الداتا، السجلات، النسخ الاحتياطية، وملفات الإعداد ما خاصهومش
 #    يتحملو من الويب.
 # ─────────────────────────────────────────────────────────────
-<FilesMatch "^(crm_data\.json|crm_data\.json\.backup|audit\.log|audit\.log\.1|journal\.log|journal\.log\.1|\.crm\.lock|\.crm\.etag|INSTALL\.txt|.*\.tmp.*)$">
+<FilesMatch "^(crm_data\.json|crm_data\.json\.backup|audit\.log|audit\.log\.1|journal\.log|journal\.log\.1|\.crm\.lock|\.crm\.etag|INSTALL\.txt|push_keys\.json|push_subs\.json|.*\.tmp.*)$">
   Require all denied
 </FilesMatch>
 
