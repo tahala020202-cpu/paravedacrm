@@ -830,6 +830,79 @@ function crm_sheet_orders($b) {
   crm_out(array('ok'=>true, 'added'=>$added, 'dup'=>$dup, 'skip'=>$skip, 't'=>$t, 'results'=>$out));
 }
 
+/* ================================================================
+ * v3.100 — طلبية سريعة من البنت (من صفحة quick.html)
+ *   POST api.php {action:'quick_order', agent:'imane', order:{nom, telephone, ville, adresse, produit, qte, prix, dateCreation?}}
+ *   الطلبية كتتسجل باسم البنت لي داخلة بحسابها (ما كتدخلش فالدور ديال الشيت).
+ *   كتصيفط إشعار لهاد البنت أوتوماتيك. التكرار: نفس التاريخ + الهاتف + المنتوج → 409.
+ *   كيرجع: {ok, id, agent} | {ok:false, err}
+ * ================================================================ */
+function crm_quick_order($b) {
+  global $LOCK_FILE;
+  $agents = array('Meryam', 'AYA', 'imane', 'safa');
+  $ag = isset($b['agent']) ? trim((string)$b['agent']) : '';
+  if (!in_array($ag, $agents, true)) crm_out(array('ok'=>false, 'err'=>'bad-agent'), 400);
+  $r = (isset($b['order']) && is_array($b['order'])) ? $b['order'] : null;
+  if ($r === null) crm_out(array('ok'=>false, 'err'=>'bad-order'), 400);
+  foreach (array('nom', 'telephone', 'ville', 'adresse', 'produit', 'qte', 'prix') as $f) {
+    if (!isset($r[$f]) || trim((string)$r[$f]) === '') crm_out(array('ok'=>false, 'err'=>'missing-' . $f), 400);
+  }
+  if (!isset($r['dateCreation']) || trim((string)$r['dateCreation']) === '') $r['dateCreation'] = date('Y-m-d');
+  list($why, $o) = crm_sheet_norm($r);
+  if ($why !== null) crm_out(array('ok'=>false, 'err'=>$why), 400);
+  if ($o['telephone'] === '') crm_out(array('ok'=>false, 'err'=>'missing-telephone'), 400);
+
+  $fh = @fopen($LOCK_FILE, 'c');
+  if ($fh) @flock($fh, LOCK_EX);
+  $data = crm_read_raw(true);
+  $cur = isset($data['paraveda_orders_v5']['d']) ? crm_unwrap($data['paraveda_orders_v5']['d']) : array();
+  if (!is_array($cur)) $cur = array();
+  $cur = array_values($cur);
+  $prevT = isset($data['paraveda_orders_v5']['t']) ? (int)$data['paraveda_orders_v5']['t'] : 0;
+
+  $keyNew = crm_sheet_key($o['dateCreation'], $o['telephone'], $o['nom'], $o['produit']);
+  $maxId = 0;
+  foreach ($cur as $x) {
+    if (!is_array($x)) continue;
+    if (isset($x['id']) && is_numeric($x['id']) && (int)$x['id'] > $maxId) $maxId = (int)$x['id'];
+    if (!empty($x['_del'])) continue;
+    $k = crm_sheet_key(
+      isset($x['dateCreation']) ? (string)$x['dateCreation'] : '',
+      isset($x['telephone'])    ? $x['telephone'] : '',
+      isset($x['nom'])          ? $x['nom'] : '',
+      isset($x['produit'])      ? $x['produit'] : ''
+    );
+    if ($k === $keyNew) {
+      if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
+      crm_out(array('ok'=>false, 'err'=>'dup'), 409);
+    }
+  }
+
+  $nowms = (int)(microtime(true) * 1000);
+  $o['agent'] = $ag;
+  $o['idCmd'] = '1';
+  $o['src']   = 'manual';
+  $o['id']    = max((int)(microtime(true) * 1000000), $maxId + 1);
+  $o['_u']    = $nowms;
+  $f = array();
+  foreach ($o as $fk => $fv) { if ($fk !== 'id' && $fk !== '_u') $f[$fk] = $nowms; }
+  $o['_f'] = $f;
+  $cur[] = $o;
+
+  crm_backup();
+  $t = max($prevT + 1, $nowms);
+  $data['paraveda_orders_v5'] = array('t' => $t, 'd' => $cur);
+  $ok = crm_write_all($data);
+  if ($ok) crm_journal_append('paraveda_orders_v5', $t, $cur);
+  if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
+  if (!$ok) crm_out(array('ok'=>false, 'err'=>'write-failed'), 500);
+  crm_audit("quick-order | agent=$ag | id=" . $o['id'] . " | t=$t");
+  try {
+    crm_push_batch(array($ag => array(array('nom'=>$o['nom'], 'produit'=>$o['produit'], 'ville'=>$o['ville']))));
+  } catch (Throwable $__e) { crm_audit('push-error | ' . $__e->getMessage()); }
+  crm_out(array('ok'=>true, 'id'=>$o['id'], 'agent'=>$ag, 't'=>$t));
+}
+
 $m = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 /* ---------- GET: full snapshot ---------- */
@@ -1115,6 +1188,7 @@ if ($m === 'POST') {
     if ($a === 'sheet_orders') crm_sheet_orders($b);   // v3.97: الشيت → CRM
     if ($a === 'push_subscribe') crm_push_subscribe($b);   // v3.98
     if ($a === 'push_test') crm_push_test($b);             // v3.98
+    if ($a === 'quick_order') crm_quick_order($b);         // v3.100: طلبية سريعة من البنت
     if (strpos($a, 'digylog') === 0) crm_out(array('ok'=>false, 'err'=>'digylog-removed', 'msg'=>'الربط مع Digylog تحيد فـ v3.41'), 410);
     crm_out(array('ok'=>false, 'err'=>'unknown-action'), 400);
   }

@@ -216,6 +216,17 @@
     document.body.appendChild(b);
   }
 
+  /* زر "طلبية سريعة" — غير للبنت (عندها agent) */
+  function quickBtn() {
+    if (document.getElementById('pv-quick-btn')) return;
+    var b = document.createElement('a');
+    b.id = 'pv-quick-btn';
+    b.href = 'quick.html';
+    b.textContent = '➕ طلبية سريعة';
+    b.style.cssText = 'position:fixed;bottom:58px;left:12px;z-index:100000;padding:8px 12px;border-radius:999px;border:none;background:#1d4ed8;color:#fff;font:13px system-ui;text-decoration:none;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+    document.body.appendChild(b);
+  }
+
   function tick() {
     var on = loggedIn();
     var b = document.getElementById('pv-push-btn');
@@ -226,8 +237,12 @@
       if (p) p.remove();
       var bn = document.getElementById('pv-push-banner');
       if (bn) bn.remove();
+      var q = document.getElementById('pv-quick-btn');
+      if (q) q.remove();
       return;
     }
+    if (myAgent()) quickBtn();
+    else { var q2 = document.getElementById('pv-quick-btn'); if (q2) q2.remove(); }
     autoSync();
     banner();
   }
