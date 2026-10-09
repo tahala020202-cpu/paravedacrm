@@ -5,12 +5,11 @@
   var NAMES = ['Meryam', 'AYA', 'imane', 'safa'];
   var KEY = 'pv_push_agent';
 
-  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
-
+  var supported = ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   var isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   var reg = null;
-  navigator.serviceWorker.register('sw.js').then(function (r) { reg = r; }).catch(function () {});
+  if (supported) navigator.serviceWorker.register('sw.js').then(function (r) { reg = r; }).catch(function () {});
 
   function b64uToBytes(s) {
     s = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -51,6 +50,12 @@
   }
 
   function panel() {
+    if (!supported) {
+      alert(isIOS
+        ? 'على آيفون: الإشعارات كتخدم غير من الشاشة الرئيسية.\n\n1) فـSafari كليكي على زر Partager (⬆️)\n2) ختار Sur l\'écran d\'accueil (زيد للشاشة الرئيسية)\n3) حل CRM من الأيقونة الجديدة\n4) من هناك كليكي على 🔔 الإشعارات'
+        : 'المتصفح ديالك ما كيدعمش الإشعارات. جرب Chrome.');
+      return;
+    }
     var box = document.getElementById('pv-push-panel');
     if (box) { box.style.display = box.style.display === 'none' ? 'block' : 'none'; return; }
     box = document.createElement('div');
