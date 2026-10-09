@@ -6,6 +6,7 @@
  *   GET  api.php                       → { key: {t, d}, ... }
  *   POST api.php {key, t, d}           → {ok:true, t:<effective t>}   (header X-Sync-Token required)
  *
+ * v3.98 — توزيع الطلبيات الجداد على: Meryam → AYA → imane → safa (بالدور)
  * v3.97 — الشيت → CRM: POST {action:'sheet_orders', rows:[...]} كيزيد الطلبيات الجداد
  *   (تكرار سيرفر-سايد: تاريخ + هاتف + منتوج). الجبد الكامل من CRM ما تبدلش.
  *
@@ -546,9 +547,14 @@ function crm_sheet_orders($b) {
 
   /* مفاتيح الطلبيات الموجودة (الحية) + أكبر id (حتى الممسوحة) باش ما نعاودوش نستعملو id */
   $keys = array(); $maxId = 0;
+  /* v3.98: توزيع الطلبيات على البنات بالدور (round-robin).
+   * $rr = عدد الطلبيات لي جاو من الشيت (حتى الممسوحين)، كيتزاد كل طلبية جديدة. */
+  $agents = array('Meryam', 'AYA', 'imane', 'safa');
+  $rr = 0;
   foreach ($cur as $o) {
     if (!is_array($o)) continue;
     if (isset($o['id']) && is_numeric($o['id']) && (int)$o['id'] > $maxId) $maxId = (int)$o['id'];
+    if (isset($o['src']) && $o['src'] === 'sheet') $rr++;
     if (!empty($o['_del'])) continue;
     $keys[crm_sheet_key(
       isset($o['dateCreation']) ? (string)$o['dateCreation'] : '',
@@ -568,6 +574,9 @@ function crm_sheet_orders($b) {
     $k = crm_sheet_key($o['dateCreation'], $o['telephone'], $o['nom'], $o['produit']);
     if (isset($keys[$k])) { $out[] = array('i'=>$i, 'st'=>'dup'); $dup++; continue; }
 
+    $o['agent'] = $agents[$rr % count($agents)];   // v3.98: الدور ديال البنات
+    $o['src']   = 'sheet';
+    $rr++;
     $o['id'] = $nextId++;
     $o['_u'] = $nowms;
     $f = array();
@@ -576,7 +585,7 @@ function crm_sheet_orders($b) {
 
     $cur[] = $o;
     $keys[$k] = true;
-    $out[] = array('i'=>$i, 'st'=>'added', 'id'=>$o['id']);
+    $out[] = array('i'=>$i, 'st'=>'added', 'id'=>$o['id'], 'agent'=>$o['agent']);
     $added++;
   }
 
