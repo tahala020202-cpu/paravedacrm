@@ -6,7 +6,7 @@
  *   GET  api.php                       → { key: {t, d}, ... }
  *   POST api.php {key, t, d}           → {ok:true, t:<effective t>}   (header X-Sync-Token required)
  *
- * v3.98 — توزيع الطلبيات الجداد على: Meryam → AYA → imane → safa (بالدور)
+ * v3.98 — توزيع الطلبيات الجداد على: Meryam → AYA → imane → safa (بالدور) + ID ديما = 1
  * v3.97 — الشيت → CRM: POST {action:'sheet_orders', rows:[...]} كيزيد الطلبيات الجداد
  *   (تكرار سيرفر-سايد: تاريخ + هاتف + منتوج). الجبد الكامل من CRM ما تبدلش.
  *
@@ -575,6 +575,7 @@ function crm_sheet_orders($b) {
     if (isset($keys[$k])) { $out[] = array('i'=>$i, 'st'=>'dup'); $dup++; continue; }
 
     $o['agent'] = $agents[$rr % count($agents)];   // v3.98: الدور ديال البنات
+    $o['idCmd'] = '1';                              // v3.98: ID ديما default = 1
     $o['src']   = 'sheet';
     $rr++;
     $o['id'] = $nextId++;
