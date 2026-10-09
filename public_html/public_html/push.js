@@ -136,6 +136,7 @@
     var old = document.getElementById('pv-push-panel');
     if (old) { old.remove(); return; }
     var me = myAgent();
+    var sid = localStorage.getItem(SESSION_KEY);
     var box = document.createElement('div');
     box.id = 'pv-push-panel';
     box.style.cssText = 'position:fixed;bottom:70px;left:12px;z-index:100000;background:#fff;border:1px solid #cbd5e1;border-radius:14px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,.2);font:14px system-ui;direction:rtl;width:240px';
@@ -144,19 +145,24 @@
     h.textContent = '🔔 الإشعارات';
     box.appendChild(h);
 
-    if (me) {
+    if (!me && !sid) {
+      var nl = document.createElement('div');
+      nl.style.cssText = 'font-size:13px;color:#334155;line-height:1.6';
+      nl.textContent = 'دخل لـCRM بحسابك أولاً، ومن بعد كليكي على 🔔 مرة أخرى.';
+      box.appendChild(nl);
+    } else if (me) {
       var st = document.createElement('div');
       st.style.cssText = 'margin:6px 0;color:#0f766e;font-weight:600';
       st.textContent = isSubscribedHere(me) ? '✅ مفعّلة' : '⚠️ ماشي مفعّلة بعد';
       box.appendChild(st);
       if (!isSubscribedHere(me)) {
         var b = document.createElement('button');
-        b.textContent = 'تفعيل';
+        b.textContent = me;
         b.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px;border-radius:10px;border:1px solid #0f766e;background:#f0fdfa;color:#0f766e;font-weight:600;cursor:pointer';
         b.onclick = function () {
           b.disabled = true; b.textContent = '...';
           enable(me).then(function () { toast('✅ الإشعارات مفعّلة'); box.remove(); })
-            .catch(function (e) { toast('❌ ' + e.message); b.disabled = false; b.textContent = 'تفعيل'; });
+            .catch(function (e) { toast('❌ ' + e.message); b.disabled = false; b.textContent = me; });
         };
         box.appendChild(b);
       }
