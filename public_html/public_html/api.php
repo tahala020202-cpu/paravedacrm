@@ -749,6 +749,19 @@ function crm_sheet_norm($r) {
   $o['commission'] = crm_sheet_num(isset($r['commission']) ? $r['commission'] : '', 0);
   return array(null, $o);
 }
+/* v3.100: عداد الدور ديال الشيت (Meryam → AYA → imane → safa) محفوظ فملف وحدو.
+ * قبل كان محسوب من عدد الطلبيات — ولا تبدلات الدمج/الحذف كانو كيرجعوه لصفر
+ * → كل الطلبيات كيمشيو لمريم. دابا كل طلبية جديدة من الشيت كتزيد +1 ف الملف. */
+function crm_rr_get() {
+  global $DATA_DIR;
+  $s = @file_get_contents($DATA_DIR . '/sheet_rr.json');
+  $j = json_decode((string)$s, true);
+  return (is_array($j) && isset($j['n'])) ? (int)$j['n'] : null;
+}
+function crm_rr_set($n) {
+  global $DATA_DIR;
+  @file_put_contents($DATA_DIR . '/sheet_rr.json', json_encode(array('n' => (int)$n)));
+}
 function crm_sheet_orders($b) {
   global $LOCK_FILE;
   $rows = (isset($b['rows']) && is_array($b['rows'])) ? array_values($b['rows']) : null;
@@ -783,6 +796,8 @@ function crm_sheet_orders($b) {
     )] = true;
   }
 
+  $rrS = crm_rr_get();              // v3.100: العداد المحفوظ هو المرجع
+  $rr = ($rrS !== null) ? $rrS : 0;   // أول مرة: تبدا من مريم
   $nowms  = (int)(microtime(true) * 1000);
   $nextId = max((int)(microtime(true) * 1000000), $maxId + 1);
   $out = array(); $added = 0; $dup = 0; $skip = 0;
@@ -825,6 +840,7 @@ function crm_sheet_orders($b) {
   if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
 
   if (!$ok) crm_out(array('ok'=>false, 'err'=>'write-failed'), 500);
+  crm_rr_set($rr);                  // v3.100
   crm_audit("sheet-orders | added=$added | dup=$dup | skip=$skip | t=$t");
   try { crm_push_batch($addedBy); } catch (Throwable $__e) { crm_audit('push-error | ' . $__e->getMessage()); }   // v3.98: ما كيوقفش الصيفط
   crm_out(array('ok'=>true, 'added'=>$added, 'dup'=>$dup, 'skip'=>$skip, 't'=>$t, 'results'=>$out));
