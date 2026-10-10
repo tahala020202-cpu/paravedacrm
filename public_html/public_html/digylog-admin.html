@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>إعدادات Digylog — Paraveda</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #f1f5f9; font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; color: #0f172a; -webkit-text-size-adjust: 100%; overflow-x: hidden; }
+    .top { background: #0f766e; color: #fff; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
+    .top h1 { font-size: 18px; margin: 0; }
+    .top a { color: #fff; text-decoration: none; background: rgba(255,255,255,.18); padding: 8px 12px; border-radius: 10px; font-size: 14px; }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
+    .card { background: #fff; border-radius: 16px; padding: 16px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(15,23,42,.06); }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    label { display: block; font-size: 14px; font-weight: 600; margin: 10px 0 6px; color: #334155; }
+    input, select { width: 100%; height: 46px; padding: 0 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; }
+    .hint { font-size: 12px; color: #64748b; margin-top: 4px; }
+    .check { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-weight: 600; }
+    .check input { width: 22px; height: 22px; }
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    button { height: 48px; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; background: #e2e8f0; color: #0f172a; }
+    button.primary { background: #0f766e; color: #fff; grid-column: 1 / -1; }
+    button:disabled { opacity: .6; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 360px; overflow: auto; direction: ltr; text-align: left; }
+    .msg { margin-top: 10px; padding: 10px 12px; border-radius: 12px; font-size: 14px; display: none; }
+    .msg.ok { display: block; background: #dcfce7; color: #166534; }
+    .msg.err { display: block; background: #fee2e2; color: #991b1b; }
+    .denied { text-align: center; padding: 30px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>⚙️ إعدادات Digylog</h1>
+    <a href="index.html">رجوع للCRM</a>
+  </div>
+
+  <div class="wrap">
+    <div id="denied" class="card denied" style="display:none">هاد الصفحة غير للأدمين. دخل بحساب الأدمين فـCRM.</div>
+
+    <div id="app" style="display:none">
+      <div class="card">
+        <h2>1) الربط</h2>
+        <label for="token">التوكن (Jeton) ديال Digylog</label>
+        <input id="token" type="password" autocomplete="off" placeholder="اللصق هنا (ما كيبانش من بعد الحفظ)" />
+        <div class="hint" id="tokInfo"></div>
+
+        <label for="network">رقم الشبكة (network)</label>
+        <input id="network" type="number" min="1" value="1" />
+        <div class="hint">كيتجاب من /networks (ديك الخانة كتتأكد بزر "اختبار الاتصال")</div>
+
+        <label>المتاجر (store) ديال كل بنت</label>
+        <input id="st_Meryam" type="text" placeholder="Meryam" />
+        <input id="st_AYA" type="text" placeholder="AYA" style="margin-top:8px" />
+        <input id="st_imane" type="text" placeholder="imane" style="margin-top:8px" />
+        <input id="st_safa" type="text" placeholder="safa" style="margin-top:8px" />
+
+        <label for="sentType">وين كيمشيو الطلبيات (sentType)</label>
+        <select id="sentType">
+          <option value="0">0 — تجربة: ما كيتصيفطش والو</option>
+          <option value="1">1 — يتصيفطو لشركة التوصيل (حقيقي)</option>
+          <option value="2">2 — يتصيفطو لمركز الاتصال</option>
+        </select>
+
+        <label class="check"><input id="enabled" type="checkbox" /> تفعيل الإرسال التلقائي (الطلبيات Confirmé)</label>
+        <div class="hint">ملي تفعّل، غير الطلبيات لي تأكدات من بعد هاد اللحظة كتمشي.</div>
+
+        <div class="btns">
+          <button class="primary" id="save">💾 حفظ</button>
+          <button id="test">🔌 اختبار الاتصال</button>
+          <button id="dry">👀 معاينة (بلا إرسال)</button>
+        </div>
+        <div id="msg" class="msg"></div>
+      </div>
+
+      <div class="card">
+        <h2>نتيجة</h2>
+        <pre id="out">—</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+    var TOKEN = '8c907fc0f4ffe0b9775a6b7c3c0fc7700e5724c0d78343df';   // نفس التوكن ديال CRM
+    var AGENTS = ['Meryam', 'AYA', 'imane', 'safa'];
+    var DEFAULT_STORES = { Meryam: 'Slim-Bio-MR', AYA: 'Slim-Bio-Ay', imane: 'Slim-Bio-IM', safa: 'Slim-Bio-Sf' };
+
+    function isAdmin() {
+      try {
+        var sid = localStorage.getItem('paraveda_session_v1');
+        var users = JSON.parse(localStorage.getItem('paraveda_users_v1') || '[]');
+        var me = users.find(function (u) { return String(u.id) === String(sid) && !u._del; });
+        return !!(me && me.role === 'admin');
+      } catch (e) { return false; }
+    }
+    if (!isAdmin()) { document.getElementById('denied').style.display = 'block'; return; }
+    document.getElementById('app').style.display = 'block';
+
+    var $ = function (id) { return document.getElementById(id); };
+    var msg = $('msg');
+    function show(text, ok) { msg.textContent = text; msg.className = 'msg ' + (ok ? 'ok' : 'err'); }
+    function out(obj) { $('out').textContent = JSON.stringify(obj, null, 2); }
+    function call(body) {
+      return fetch('api.php', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'X-Sync-Token': TOKEN },
+        body: JSON.stringify(body)
+      }).then(function (r) { return r.json(); });
+    }
+    function storesValue() {
+      var s = {};
+      AGENTS.forEach(function (a) { s[a] = $('st_' + a).value.trim(); });
+      return s;
+    }
+    function fill(cfg) {
+      $('network').value = cfg.network || 1;
+      $('sentType').value = String(cfg.sentType || 0);
+      $('enabled').checked = !!cfg.enabled;
+      AGENTS.forEach(function (a) { $('st_' + a).value = (cfg.stores && cfg.stores[a]) || DEFAULT_STORES[a]; });
+      $('tokInfo').textContent = cfg.hasToken ? ('✅ توكن محفوظ (…' + cfg.tokenTail + ')') : '⚠️ ما كاينش توكن بعد';
+    }
+
+    call({ action: 'digylog_admin', op: 'get' }).then(function (j) {
+      if (j && j.ok) { fill(j.cfg); out(j); }
+      else show('❌ ما قدرتش نجيب الإعدادات (' + ((j && j.err) || 'error') + ')', false);
+    }).catch(function () { show('❌ مشكل فالاتصال', false); });
+
+    function run(btn, body, after) {
+      btn.disabled = true;
+      call(body).then(function (j) { out(j); after(j); })
+        .catch(function () { show('❌ مشكل فالاتصال', false); })
+        .then(function () { btn.disabled = false; });
+    }
+
+    $('save').onclick = function () {
+      var body = {
+        action: 'digylog_admin', op: 'save',
+        network: parseInt($('network').value, 10) || 1,
+        sentType: parseInt($('sentType').value, 10),
+        stores: storesValue(),
+        enabled: $('enabled').checked ? 1 : 0
+      };
+      var t = $('token').value.trim();
+      if (t) body.token = t;
+      run($('save'), body, function (j) {
+        if (j.ok) { show('✅ تحفظات', true); $('token').value = ''; call({ action: 'digylog_admin', op: 'get' }).then(function (g) { if (g.ok) fill(g.cfg); }); }
+        else show('❌ ما تحفظاتش (' + (j.err || 'error') + ')', false);
+      });
+    };
+    $('test').onclick = function () {
+      run($('test'), { action: 'digylog_admin', op: 'test' }, function (j) {
+        show(j.ok ? 'ℹ️ شوف النتيجة تحت' : '❌ ' + (j.err || 'error'), !!j.ok);
+      });
+    };
+    $('dry').onclick = function () {
+      run($('dry'), { action: 'digylog_admin', op: 'dry' }, function (j) {
+        show(j.ok ? '👀 هادي الطلبيات لي غاديين يمشيو (ما تصيفطاتش)' : '❌ ' + (j.err || 'error'), !!j.ok);
+      });
+    };
+  })();
+  </script>
+</body>
+</html>

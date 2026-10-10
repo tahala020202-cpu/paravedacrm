@@ -919,10 +919,237 @@ function crm_quick_order($b) {
   crm_out(array('ok'=>true, 'id'=>$o['id'], 'agent'=>$ag, 't'=>$t));
 }
 
+/* ================================================================
+ * v3.101 — Digylog: إرسال الطلبيات المؤكدة (Confirmé) أوتوماتيك
+ *   كل بنت ليها متجر خاص فـDigylog (store). الطلبية كتمشي لمتجر البنت لي عندها.
+ *   الإعدادات فملف digylog_cfg.json (التوكن ما كيتعرضش). كيتشغل بـcron:
+ *     GET api.php?action=digylog_sync&token=...   (كل دقيقة)
+ *   الطلبية كتتصيفط مرة وحدة: كتتعلم dlSent. إلا فشل، كتعاود (حتى 5 مرات).
+ *   غير الطلبيات لي تأكدات (statut = Confirmé) بعد التفعيل (_f.statut >= since).
+ * ================================================================ */
+function crm_dl_base() { return 'https://api.digylog.com/api/v2/seller'; }
+function crm_dl_agents() { return array('Meryam', 'AYA', 'imane', 'safa'); }
+function crm_dl_cfg_get() {
+  global $DATA_DIR;
+  $s = @file_get_contents($DATA_DIR . '/digylog_cfg.json');
+  $j = json_decode((string)$s, true);
+  return is_array($j) ? $j : array();
+}
+function crm_dl_cfg_set($c) {
+  global $DATA_DIR;
+  @file_put_contents($DATA_DIR . '/digylog_cfg.json', json_encode($c, JSON_UNESCAPED_UNICODE));
+}
+function crm_dl_http($method, $path, $token, $body = null) {
+  if (!function_exists('curl_init')) return array(0, '', 'no-curl');
+  $ch = curl_init(crm_dl_base() . $path);
+  $h = array('Accept: application/json', 'Referer: https://apiseller.digylog.com', 'Authorization: Bearer ' . $token);
+  if ($body !== null) $h[] = 'Content-Type: application/json';
+  curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, $h);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+  curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 25);
+  if ($body !== null) curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE));
+  $resp = curl_exec($ch);
+  $err  = (string)curl_error($ch);
+  $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  curl_close($ch);
+  return array($code, $resp === false ? '' : (string)$resp, $err);
+}
+function crm_dl_order_row($o) {
+  return array(
+    'num'         => (string)$o['id'],
+    'name'        => trim((string)$o['nom']),
+    'phone'       => trim((string)$o['telephone']),
+    'address'     => trim((string)$o['adresse']),
+    'city'        => trim((string)$o['ville']),
+    'price'       => (float)$o['prix'],
+    'openproduct' => 1,
+    'cantry'      => 0,
+    'port'        => 2,            // 2 = البائع كيخلص الشحن
+    'note'        => '',
+    'refs'        => array(array('ref' => '', 'designation' => trim((string)$o['produit']), 'quantity' => max(1, (int)$o['qte'])))
+  );
+}
+function crm_dl_body($store, $network, $sentType, $rows) {
+  return array(
+    'network'        => (int)$network,
+    'store'          => (string)$store,
+    'sentType'       => (int)$sentType,
+    'checkDuplicate' => 1,
+    'orders'         => $rows
+  );
+}
+/* admin: POST {action:'digylog_admin', op:'get'|'save'|'test'|'dry'} + header X-Sync-Token */
+function crm_dl_admin($b) {
+  global $SECRET;
+  if (!hash_equals($SECRET, crm_token())) crm_out(array('ok'=>false, 'err'=>'token'), 403);
+  $op = isset($b['op']) ? (string)$b['op'] : 'get';
+  $c = crm_dl_cfg_get();
+  $t = isset($c['token']) ? (string)$c['token'] : '';
+  $stores = array();
+  foreach (crm_dl_agents() as $ag) $stores[$ag] = (isset($c['stores'][$ag]) ? (string)$c['stores'][$ag] : '');
+
+  if ($op === 'get') {
+    crm_out(array('ok'=>true, 'cfg'=>array(
+      'enabled'   => !empty($c['enabled']) ? 1 : 0,
+      'network'   => isset($c['network']) ? (int)$c['network'] : 1,
+      'sentType'  => isset($c['sentType']) ? (int)$c['sentType'] : 0,
+      'stores'    => $stores,
+      'since'     => isset($c['since']) ? (int)$c['since'] : 0,
+      'hasToken'  => $t !== '',
+      'tokenTail' => $t !== '' ? substr($t, -4) : ''
+    )));
+  }
+  if ($op === 'save') {
+    if (isset($b['token']) && trim((string)$b['token']) !== '') $c['token'] = trim((string)$b['token']);
+    if (isset($b['network'])) $c['network'] = (int)$b['network'];
+    if (isset($b['sentType'])) {
+      $st = (int)$b['sentType'];
+      if (!in_array($st, array(0, 1, 2), true)) crm_out(array('ok'=>false, 'err'=>'bad-sentType'), 400);
+      $c['sentType'] = $st;
+    }
+    if (isset($b['stores']) && is_array($b['stores'])) {
+      $s = array();
+      foreach (crm_dl_agents() as $ag) $s[$ag] = isset($b['stores'][$ag]) ? trim((string)$b['stores'][$ag]) : '';
+      $c['stores'] = $s;
+    }
+    $en = !empty($b['enabled']) ? 1 : 0;
+    if ($en && empty($c['enabled'])) $c['since'] = (int)(microtime(true) * 1000);   // أول تفعيل: غير الطلبيات الجداد
+    $c['enabled'] = $en;
+    crm_dl_cfg_set($c);
+    crm_audit('digylog-save | enabled=' . $en . ' | sentType=' . (isset($c['sentType']) ? $c['sentType'] : 0));
+    crm_out(array('ok'=>true));
+  }
+  if ($op === 'test') {
+    if ($t === '') crm_out(array('ok'=>false, 'err'=>'no-token'), 400);
+    $out = array();
+    foreach (array('/networks', '/stores') as $p) {
+      list($code, $body, $err) = crm_dl_http('GET', $p, $t);
+      $out[$p] = array('code'=>$code, 'body'=>substr($body, 0, 1500), 'err'=>$err);
+    }
+    crm_out(array('ok'=>true, 'test'=>$out));
+  }
+  if ($op === 'dry') crm_out(crm_dl_run(true));
+  crm_out(array('ok'=>false, 'err'=>'bad-op'), 400);
+}
+/* يشتغل: من cron (GET) أو من admin (dry) */
+function crm_dl_run($dry = false) {
+  global $LOCK_FILE, $DATA_DIR;
+  $c = crm_dl_cfg_get();
+  if (!$dry && empty($c['enabled'])) return array('ok'=>true, 'skipped'=>'disabled');
+  $since   = isset($c['since']) ? (int)$c['since'] : 0;
+  $token   = isset($c['token']) ? (string)$c['token'] : '';
+  $network = isset($c['network']) ? (int)$c['network'] : 1;
+  $sentTyp = isset($c['sentType']) ? (int)$c['sentType'] : 0;
+  $stores  = array();
+  foreach (crm_dl_agents() as $ag) $stores[$ag] = isset($c['stores'][$ag]) ? trim((string)$c['stores'][$ag]) : '';
+  if (!$dry && $token === '') return array('ok'=>false, 'err'=>'no-token');
+  if ($since <= 0 && !$dry) return array('ok'=>false, 'err'=>'not-enabled-properly');
+
+  $runLock = @fopen($DATA_DIR . '/.dl.lock', 'c');
+  if ($runLock && !$dry && !@flock($runLock, LOCK_EX | LOCK_NB)) return array('ok'=>true, 'skipped'=>'busy');
+
+  /* 1) قراية (لوك قصير) + اختيار الطلبيات */
+  $fh = @fopen($LOCK_FILE, 'c'); if ($fh) @flock($fh, LOCK_EX);
+  $data = crm_read_raw(true);
+  $cur = isset($data['paraveda_orders_v5']['d']) ? crm_unwrap($data['paraveda_orders_v5']['d']) : array();
+  if (!is_array($cur)) $cur = array();
+  $prevT = isset($data['paraveda_orders_v5']['t']) ? (int)$data['paraveda_orders_v5']['t'] : 0;
+  if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
+
+  $groups = array(); $skipped = array();
+  foreach ($cur as $o) {
+    if (!is_array($o) || !empty($o['_del']) || !empty($o['dlSent'])) continue;
+    $st = isset($o['statut']) ? (string)$o['statut'] : '';
+    if (stripos($st, 'confirm') === false) continue;
+    $stamp = (isset($o['_f']['statut']) && is_numeric($o['_f']['statut'])) ? (float)$o['_f']['statut'] : 0;
+    if ($since <= 0 || $stamp < $since) continue;
+    $tries = isset($o['dlTries']) ? (int)$o['dlTries'] : 0;
+    if ($tries >= 5) continue;
+    $id = (string)$o['id'];
+    $ag = isset($o['agent']) ? (string)$o['agent'] : '';
+    $store = isset($stores[$ag]) ? $stores[$ag] : '';
+    if ($store === '') { $skipped[] = array('id'=>$id, 'why'=>'no-store-for-agent', 'agent'=>$ag); continue; }
+    $miss = '';
+    foreach (array('nom', 'telephone', 'adresse', 'ville', 'produit') as $f) {
+      if (!isset($o[$f]) || trim((string)$o[$f]) === '') { $miss = $f; break; }
+    }
+    if ($miss !== '') { $skipped[] = array('id'=>$id, 'why'=>'missing-' . $miss); continue; }
+    $groups[$store][] = array('id'=>$id, 'row'=>crm_dl_order_row($o));
+  }
+
+  if ($dry) {
+    $sum = array();
+    foreach ($groups as $store => $rows) {
+      $sum[] = array('store'=>$store, 'count'=>count($rows), 'payload'=>crm_dl_body($store, $network, $sentTyp, array_map(function ($r) { return $r['row']; }, $rows)));
+    }
+    return array('ok'=>true, 'dry'=>true, 'sentType'=>$sentTyp, 'network'=>$network, 'groups'=>$sum, 'skipped'=>$skipped);
+  }
+
+  /* 2) إرسال (بلا لوك) */
+  $sent = array(); $failed = array();
+  foreach ($groups as $store => $rows) {
+    for ($i = 0; $i < count($rows); $i += 50) {
+      $chunk = array_slice($rows, $i, 50);
+      $body = crm_dl_body($store, $network, $sentTyp, array_map(function ($r) { return $r['row']; }, $chunk));
+      list($code, $resp, $err) = crm_dl_http('POST', '/orders/standard', $token, $body);
+      $ok = ($code >= 200 && $code < 300);
+      $j = json_decode($resp, true);
+      if ($ok && is_array($j) && isset($j['success']) && $j['success'] === false) $ok = false;
+      foreach ($chunk as $r) {
+        if ($ok) $sent[$r['id']] = substr($resp, 0, 200);
+        else $failed[$r['id']] = ($err !== '' ? $err : ('http-' . $code . ' ' . substr($resp, 0, 150)));
+      }
+    }
+  }
+
+  /* 3) كتابة النتيجة (لوك) */
+  $applied = 0;
+  if ($sent || $failed) {
+    $fh = @fopen($LOCK_FILE, 'c'); if ($fh) @flock($fh, LOCK_EX);
+    $data = crm_read_raw(true);
+    $cur = isset($data['paraveda_orders_v5']['d']) ? crm_unwrap($data['paraveda_orders_v5']['d']) : array();
+    if (!is_array($cur)) $cur = array();
+    $prevT = isset($data['paraveda_orders_v5']['t']) ? (int)$data['paraveda_orders_v5']['t'] : 0;
+    $now = (int)(microtime(true) * 1000);
+    foreach ($cur as $i => $o) {
+      if (!is_array($o) || !isset($o['id'])) continue;
+      $id = (string)$o['id'];
+      if (!isset($o['_f']) || !is_array($o['_f'])) $o['_f'] = array();
+      if (isset($sent[$id])) {
+        $o['dlSent'] = 1; $o['dlAt'] = $now; $o['dlRes'] = $sent[$id];
+        $o['_f']['dlSent'] = $now; $o['_u'] = $now; $applied++;
+      } elseif (isset($failed[$id])) {
+        $o['dlTries'] = (isset($o['dlTries']) ? (int)$o['dlTries'] : 0) + 1;
+        $o['dlErr'] = substr((string)$failed[$id], 0, 200);
+        $o['_f']['dlTries'] = $now; $o['_f']['dlErr'] = $now; $o['_u'] = $now; $applied++;
+      } else continue;
+      $cur[$i] = $o;
+    }
+    if ($applied > 0) {
+      crm_backup();
+      $t = max($prevT + 1, $now);
+      $data['paraveda_orders_v5'] = array('t' => $t, 'd' => array_values($cur));
+      $ok = crm_write_all($data);
+      if ($ok) crm_journal_append('paraveda_orders_v5', $t, array_values($cur));
+    }
+    if ($fh) { @flock($fh, LOCK_UN); @fclose($fh); }
+  }
+  if ($runLock) { @flock($runLock, LOCK_UN); @fclose($runLock); }
+  crm_audit('digylog-sync | sent=' . count($sent) . ' | failed=' . count($failed) . ' | skipped=' . count($skipped) . ' | applied=' . $applied);
+  return array('ok'=>true, 'sent'=>count($sent), 'failed'=>count($failed), 'skipped'=>count($skipped), 'applied'=>$applied, 'errors'=>$failed);
+}
+
 $m = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 /* ---------- GET: full snapshot ---------- */
 if ($m === 'GET') {
+  // v3.101: cron ديال Digylog: api.php?action=digylog_sync&token=...
+  if (isset($_GET['action']) && $_GET['action'] === 'digylog_sync') {
+    if (!hash_equals($SECRET, crm_token())) crm_out(array('ok'=>false, 'err'=>'token'), 403);
+    crm_out(crm_dl_run(false));
+  }
   // v3.41: la lecture exige aussi le token (avant: n'importe qui avec l'URL téléchargeait tous les clients)
   if (!hash_equals($SECRET, crm_token())) crm_out(array('ok'=>false, 'err'=>'token'), 403);
 
@@ -1205,6 +1432,7 @@ if ($m === 'POST') {
     if ($a === 'push_subscribe') crm_push_subscribe($b);   // v3.98
     if ($a === 'push_test') crm_push_test($b);             // v3.98
     if ($a === 'quick_order') crm_quick_order($b);         // v3.100: طلبية سريعة من البنت
+    if ($a === 'digylog_admin') crm_dl_admin($b);          // v3.101: إعدادات Digylog (أدمين)
     if (strpos($a, 'digylog') === 0) crm_out(array('ok'=>false, 'err'=>'digylog-removed', 'msg'=>'الربط مع Digylog تحيد فـ v3.41'), 410);
     crm_out(array('ok'=>false, 'err'=>'unknown-action'), 400);
   }
