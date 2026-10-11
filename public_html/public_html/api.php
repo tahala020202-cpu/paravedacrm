@@ -1064,6 +1064,7 @@ function crm_dl_run($dry = false) {
     if (!is_array($o) || !empty($o['_del']) || !empty($o['dlSent'])) continue;
     $st = isset($o['statut']) ? (string)$o['statut'] : '';
     if (stripos($st, 'confirm') === false) continue;
+    if (trim((string)(isset($o['livraison']) ? $o['livraison'] : '')) !== '') continue;   // Suivie فارغ = ما تصيفطاتش بعد
     $stamp = (isset($o['_f']['statut']) && is_numeric($o['_f']['statut'])) ? (float)$o['_f']['statut'] : 0;
     if (!($since > 0 ? ($stamp >= $since) : $dry)) continue;   // بعد التفعيل: غير الجداد. قبل التفعيل: المعاينة فقط
     $tries = isset($o['dlTries']) ? (int)$o['dlTries'] : 0;
@@ -1121,6 +1122,7 @@ function crm_dl_run($dry = false) {
       if (!isset($o['_f']) || !is_array($o['_f'])) $o['_f'] = array();
       if (isset($sent[$id])) {
         $o['dlSent'] = 1; $o['dlAt'] = $now; $o['dlRes'] = $sent[$id];
+        $o['livraison'] = 'Expédier vers'; $o['_f']['livraison'] = $now;
         $o['_f']['dlSent'] = $now; $o['_u'] = $now; $applied++;
       } elseif (isset($failed[$id])) {
         $o['dlTries'] = (isset($o['dlTries']) ? (int)$o['dlTries'] : 0) + 1;
