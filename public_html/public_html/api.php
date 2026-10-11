@@ -1086,7 +1086,28 @@ function crm_dl_run($dry = false) {
       $sum[] = array('store'=>$store, 'count'=>count($rows), 'sample'=>crm_dl_body($store, $network, $sentTyp, array_slice(array_map(function ($r) { return $r['row']; }, $rows), 0, 1)));
     }
     $note = ($since > 0) ? 'هادي هي الطلبيات لي غادي تمشي للمتاجر (بعد التفعيل).' : 'مازال ما تفعلاتش الإرسال. هاد الأرقام معاينة فقط: الطلبيات القديمة ما غاديش تتصيفط. ملي تفعّل، غير الطلبيات Confirmé الجداد غادي يمشيو.';
-    return array('ok'=>true, 'dry'=>true, 'note'=>$note, 'sentType'=>$sentTyp, 'network'=>$network, 'groups'=>$sum, 'skipped'=>$skipped);
+    /* تشخيص: كل طلبية Confirmé (بلا بيانات حساسة) + علاش ما تصيفطاتش */
+    $dbg = array(); $dbgN = 0;
+    foreach ($cur as $o) {
+      if (!is_array($o) || !empty($o['_del'])) continue;
+      $st = isset($o['statut']) ? (string)$o['statut'] : '';
+      if (stripos($st, 'confirm') === false) continue;
+      $stp = (isset($o['_f']['statut']) && is_numeric($o['_f']['statut'])) ? (float)$o['_f']['statut'] : 0;
+      $dbgN++;
+      $dbg[] = array(
+        'id'      => (string)(isset($o['id']) ? $o['id'] : ''),
+        'nom'     => mb_substr((string)(isset($o['nom']) ? $o['nom'] : ''), 0, 20),
+        'agent'   => (string)(isset($o['agent']) ? $o['agent'] : ''),
+        'liv'     => (string)(isset($o['livraison']) ? $o['livraison'] : ''),
+        'stampOk' => ($since > 0 ? ($stp >= $since ? 1 : 0) : -1),
+        'dlSent'  => !empty($o['dlSent']) ? 1 : 0,
+        'tries'   => isset($o['dlTries']) ? (int)$o['dlTries'] : 0,
+        'err'     => mb_substr((string)(isset($o['dlErr']) ? $o['dlErr'] : ''), 0, 160)
+      );
+    }
+    usort($dbg, function ($a, $b) { return ($b['stampOk'] - $a['stampOk']) ?: ($b['dlSent'] - $a['dlSent']); });
+    $dbg = array_slice($dbg, 0, 40);
+    return array('ok'=>true, 'dry'=>true, 'note'=>$note, 'sentType'=>$sentTyp, 'network'=>$network, 'since'=>$since, 'groups'=>$sum, 'skipped'=>$skipped, 'confirmedTotal'=>$dbgN, 'confirmedDebug'=>$dbg);
   }
 
   /* 2) إرسال (بلا لوك) */
