@@ -1038,7 +1038,6 @@ function crm_dl_run($dry = false) {
   global $LOCK_FILE, $DATA_DIR;
   $c = crm_dl_cfg_get();
   if (!$dry && empty($c['enabled'])) return array('ok'=>true, 'skipped'=>'disabled');
-  if (!$dry && isset($c['sentType']) && (int)$c['sentType'] === 0) return array('ok'=>true, 'skipped'=>'sentType-0');
   $since   = isset($c['since']) ? (int)$c['since'] : 0;
   $token   = isset($c['token']) ? (string)$c['token'] : '';
   $network = isset($c['network']) ? (int)$c['network'] : 1;
@@ -1122,7 +1121,7 @@ function crm_dl_run($dry = false) {
       if (!isset($o['_f']) || !is_array($o['_f'])) $o['_f'] = array();
       if (isset($sent[$id])) {
         $o['dlSent'] = 1; $o['dlAt'] = $now; $o['dlRes'] = $sent[$id];
-        $o['livraison'] = 'Expédier vers'; $o['_f']['livraison'] = $now;
+        if ($sentTyp !== 0) { $o['livraison'] = 'Expédier vers'; $o['_f']['livraison'] = $now; }   // تجربة (0): ما كنبدلوش Suivie
         $o['_f']['dlSent'] = $now; $o['_u'] = $now; $applied++;
       } elseif (isset($failed[$id])) {
         $o['dlTries'] = (isset($o['dlTries']) ? (int)$o['dlTries'] : 0) + 1;
