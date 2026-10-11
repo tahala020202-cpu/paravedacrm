@@ -1038,6 +1038,7 @@ function crm_dl_run($dry = false) {
   global $LOCK_FILE, $DATA_DIR;
   $c = crm_dl_cfg_get();
   if (!$dry && empty($c['enabled'])) return array('ok'=>true, 'skipped'=>'disabled');
+  if (!$dry && isset($c['sentType']) && (int)$c['sentType'] === 0) return array('ok'=>true, 'skipped'=>'sentType-0');
   $since   = isset($c['since']) ? (int)$c['since'] : 0;
   $token   = isset($c['token']) ? (string)$c['token'] : '';
   $network = isset($c['network']) ? (int)$c['network'] : 1;
@@ -1064,7 +1065,7 @@ function crm_dl_run($dry = false) {
     $st = isset($o['statut']) ? (string)$o['statut'] : '';
     if (stripos($st, 'confirm') === false) continue;
     $stamp = (isset($o['_f']['statut']) && is_numeric($o['_f']['statut'])) ? (float)$o['_f']['statut'] : 0;
-    if ($since <= 0 || $stamp < $since) continue;
+    if (!($since > 0 ? ($stamp >= $since) : $dry)) continue;   // بعد التفعيل: غير الجداد. قبل التفعيل: المعاينة فقط
     $tries = isset($o['dlTries']) ? (int)$o['dlTries'] : 0;
     if ($tries >= 5) continue;
     $id = (string)$o['id'];
@@ -1082,9 +1083,10 @@ function crm_dl_run($dry = false) {
   if ($dry) {
     $sum = array();
     foreach ($groups as $store => $rows) {
-      $sum[] = array('store'=>$store, 'count'=>count($rows), 'payload'=>crm_dl_body($store, $network, $sentTyp, array_map(function ($r) { return $r['row']; }, $rows)));
+      $sum[] = array('store'=>$store, 'count'=>count($rows), 'sample'=>crm_dl_body($store, $network, $sentTyp, array_slice(array_map(function ($r) { return $r['row']; }, $rows), 0, 1)));
     }
-    return array('ok'=>true, 'dry'=>true, 'sentType'=>$sentTyp, 'network'=>$network, 'groups'=>$sum, 'skipped'=>$skipped);
+    $note = ($since > 0) ? 'هادي هي الطلبيات لي غادي تمشي للمتاجر (بعد التفعيل).' : 'مازال ما تفعلاتش الإرسال. هاد الأرقام معاينة فقط: الطلبيات القديمة ما غاديش تتصيفط. ملي تفعّل، غير الطلبيات Confirmé الجداد غادي يمشيو.';
+    return array('ok'=>true, 'dry'=>true, 'note'=>$note, 'sentType'=>$sentTyp, 'network'=>$network, 'groups'=>$sum, 'skipped'=>$skipped);
   }
 
   /* 2) إرسال (بلا لوك) */
